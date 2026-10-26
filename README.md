@@ -1,58 +1,58 @@
-# LAB 1: IOT CLOUD PLATFORM AND MQTT PROTOCOL WITH COREIOT
+# LAB 1: NỀN TẢNG IOT CLOUD VÀ GIAO THỨC MQTT VỚI COREIOT
 
-Khoa Khoa hoc va Ky thuat May tinh - Truong Dai hoc Bach Khoa, DHQG-HCM  
-Mon hoc: Internet van vat (CO3061 / CO3062)  
-Nhanh Git: `lab1_coreiot`  
-Nen tang: CoreIOT Cloud Platform (ThingsBoard based)  
-Giao thuc truyen thong: MQTT (Message Queuing Telemetry Transport)  
-
----
-
-## 1. Muc tieu thi nghiem
-
-1. Nam vung kien truc 3 tang tieu chuan cua he thong Internet van vat:
-   - **Tang Thu nhan (Perception Layer):** Thiet bi bien thu thap tin hieu tu cam bien nhiet do, do am va anh sang.
-   - **Tang Mang (Network Layer):** Giao thuc mang MQTT chay tren nen tang TCP/IP, mo hinh Publish - Subscribe nhe va tiet kiem bang thong.
-   - **Tang Ung dung (Application Layer):** May chu dam may CoreIOT tiep nhan, luu tru chuoi thoi gian (Time-series data) va truc quan hoa du lieu tren Dashboard.
-2. Thuc hanh xac thuc thiet bi bang Access Token bao mat.
-3. Nam vung chu ky va dinh dang goi tin Telemetry (JSON Payload).
-4. Thiet lap co che goi thu tuc tu xa hai chieu (Bidirectional Remote Procedure Call - RPC) de dieu khien co cau chap hanh tu Dashboard.
-5. Quan ly phan quyen nguoi dung (Customer Assignment) va chia se giao dien Dashboard cong khai (Public URL).
+Khoa Khoa học và Kỹ thuật Máy tính - Trường Đại học Bách Khoa, ĐHQG-HCM  
+Môn học: Internet vạn vật (CO3061 / CO3062)  
+Nhánh Git: `lab1_coreiot` (hoặc `lab1`)  
+Nền tảng: CoreIOT Cloud Platform (phát triển trên nền ThingsBoard)  
+Giao thức truyền thông: MQTT (Message Queuing Telemetry Transport)  
 
 ---
 
-## 2. Thong so may chu va Giao thuc MQTT
+## 1. Mục tiêu thí nghiệm
 
-He thong ket noi truc tiep toi may chu Cloud Broker tieu chuan cua khoa hoc:
+1. Nắm vững kiến trúc 3 tầng tiêu chuẩn của hệ thống Internet vạn vật:
+   - **Tầng Thu nhận (Perception Layer):** Thiết bị biên thu thập tín hiệu từ cảm biến nhiệt độ, độ ẩm và ánh sáng.
+   - **Tầng Mạng (Network Layer):** Giao thức mạng MQTT hoạt động trên nền TCP/IP, mô hình Publish - Subscribe nhẹ, tiết kiệm băng thông.
+   - **Tầng Ứng dụng (Application Layer):** Máy chủ đám mây CoreIOT tiếp nhận, lưu trữ dữ liệu chuỗi thời gian (Time-series data) và trực quan hóa trên Dashboard.
+2. Thực hành xác thực thiết bị bằng Access Token bảo mật.
+3. Nắm vững chu kỳ và định dạng gói tin Telemetry (JSON Payload).
+4. Thiết lập cơ chế gọi thủ tục từ xa hai chiều (Bidirectional Remote Procedure Call - RPC) để điều khiển cơ cấu chấp hành từ Dashboard.
+5. Quản lý phân quyền người dùng (Customer Assignment) và xuất bản giao diện Dashboard công khai (Public URL).
 
-| Thong so | Gia tri cau hinh | Giai thich ky thuat |
+---
+
+## 2. Thông số máy chủ và Giao thức MQTT
+
+Hệ thống kết nối trực tiếp tới máy chủ Cloud Broker tiêu chuẩn của khóa học:
+
+| Thông số | Giá trị cấu hình | Giải thích kỹ thuật |
 | :--- | :--- | :--- |
-| MQTT Broker Host | `app.coreiot.io` | Dia chi may chu may chu Cloud CoreIOT |
-| Cong TCP tieu chuan | `1883` | Cong truyen thong MQTT Plaintext |
-| Thong tin xac thuc | Device Access Token | Token do nguoi dung tao (Toi thieu 12 ky tu) |
-| Topic gui Telemetry | `v1/devices/me/telemetry` | Publish du lieu cam bien len may chu |
-| Topic dang ky nhan RPC | `v1/devices/me/rpc/request/+` | Subscribe de nhan yeu cau dieu khien tu Dashboard |
-| Topic phan hoi ket qua RPC | `v1/devices/me/rpc/response/{id}` | Publish ket qua phan hoi trang thai thiet bi ve Dashboard |
+| MQTT Broker Host | `app.coreiot.io` | Địa chỉ máy chủ Cloud CoreIOT |
+| Cổng TCP tiêu chuẩn | `1883` | Cổng truyền thông MQTT Plaintext |
+| Thông tin xác thực | Device Access Token | Token do người dùng tạo (Tối thiểu 12 ký tự) |
+| Topic gửi Telemetry | `v1/devices/me/telemetry` | Publish dữ liệu cảm biến lên máy chủ |
+| Topic đăng ký nhận RPC | `v1/devices/me/rpc/request/+` | Subscribe để nhận yêu cầu điều khiển từ Dashboard |
+| Topic phản hồi kết quả RPC | `v1/devices/me/rpc/response/{id}` | Publish kết quả phản hồi trạng thái thiết bị về Dashboard |
 
 ---
 
-## 3. Danh muc cac bai tap thuc hanh va Mo ta chi tiet
+## 3. Danh mục các bài tập thực hành và Mô tả chi tiết
 
-### Bai 1: Tao thiet bi, thong tin xac thuc va nhom thiet bi (Device Management)
-- **Muc tieu:** Lam quen voi giao dien quan tri cua he thong CoreIOT.
-- **Yeu cau thuc hien:**
-  - Dang nhap he thong, tao mot Device Profile phu hop voi yeu cau quan ly.
-  - Khoi tao mot thiet bi moi voi dinh dang Access Token chua ma so sinh vien (Vi du: `Vo_Lab1_Token_2313946`).
-  - Tao Nhom thiet bi (Device Group) va phan quyen thiet bi vao nhom tuong ung.
-- **Kiem chung:** Trang thai thiet bi tren giao dien CoreIOT chuyen sang Active khi co ket noi dau tien.
+### Bài 1: Tạo thiết bị, thông tin xác thực và nhóm thiết bị (Device Management)
+- **Mục tiêu:** Làm quen với giao diện quản trị của hệ thống CoreIOT.
+- **Yêu cầu thực hiện:**
+  - Đăng nhập hệ thống, tạo một Device Profile phù hợp với yêu cầu quản lý.
+  - Khởi tạo một thiết bị mới với định dạng Access Token chứa mã số sinh viên (Ví dụ: `Vo_Lab1_Token_2313946`).
+  - Tạo Nhóm thiết bị (Device Group) và phân quyền thiết bị vào nhóm tương ứng.
+- **Kiểm chứng:** Trạng thái thiết bị trên giao diện CoreIOT chuyển sang Active khi có kết nối đầu tiên.
 
-### Bai 2: Gui Telemetry tu Python kem cam bien anh sang gia lap (Telemetry Streaming)
-- **Muc tieu:** Xay dung thiet bi bien gia lap gui du lieu dinh ky len Cloud qua MQTT.
-- **Yeu cau thuc hien:**
-  - Su dung thu vien `paho-mqtt` tren Python de thiet lap ket noi toi `app.coreiot.io:1883`.
-  - Thu thap hoac gia lap 3 thong so moi truong: Nhiet do (°C), Do am (%), Cuong do anh sang (Lux).
-  - Chu ky truyen gui du lieu (Publish Rate) bat buoc la **3 giay/lan**.
-  - Dinh dang goi tin JSON Payload:
+### Bài 2: Gửi Telemetry từ Python kèm cảm biến ánh sáng giả lập (Telemetry Streaming)
+- **Mục tiêu:** Xây dựng thiết bị biên giả lập gửi dữ liệu định kỳ lên Cloud qua MQTT.
+- **Yêu cầu thực hiện:**
+  - Sử dụng thư viện `paho-mqtt` trên Python để thiết lập kết nối tới `app.coreiot.io:1883`.
+  - Thu thập hoặc giả lập 3 thông số môi trường: Nhiệt độ (°C), Độ ẩm (%), Cường độ ánh sáng (Lux).
+  - Chu kỳ truyền gửi dữ liệu (Publish Rate) bắt buộc là **3 giây/lần**.
+  - Định dạng gói tin JSON Payload:
     ```json
     {
       "temperature": 28.5,
@@ -60,62 +60,62 @@ He thong ket noi truc tiep toi may chu Cloud Broker tieu chuan cua khoa hoc:
       "light": 420
     }
     ```
-- **Kiem chung:** Tab **Latest Telemetry** tren thiet bi tai CoreIOT cap nhat cac gia tri do moi sau moi 3 giay kem theo dau thoi gian (Timestamp) chinh xac.
+- **Kiểm chứng:** Tab **Latest Telemetry** trên thiết bị tại CoreIOT cập nhật các giá trị đo mới sau mỗi 3 giây kèm theo dấu thời gian (Timestamp) chính xác.
 
-### Bai 3: Xay dung Dashboard giam sat truc quan (Visualization Dashboard)
-- **Muc tieu:** Thiet ke giao dien giam sat truc quan theo tieu chuan cong nghiep.
-- **Yeu cau thuc hien:**
-  - Tao mot Dashboard moi gan voi Alias cua thiet bi da khoi tao o Bai 1.
-  - Cau hinh cac Widget truc quan hoa:
-    - **Digital Gauge Widget:** Hien thi gia tri tuc thoi cua Nhiet do va Do am voi cac dai mau canh bao truc quan (Xanh: Ly tuong, Do: Nguy hiem).
-    - **Card Status Widget:** Hien thi cuong do anh sang tuc thoi.
-    - **Time-series Line Chart:** Bieu do duong the hien su bien thien cua cac thong so theo thoi gian thuc, cho phep phong to/thu nho va chon khoang thoi gian khao sat.
-- **Kiem chung:** Dashboard tu dong cap nhat dong moi khi thiet bi bien gui goi tin Telemetry len.
+### Bài 3: Xây dựng Dashboard giám sát trực quan (Visualization Dashboard)
+- **Mục tiêu:** Thiết kế giao diện giám sát trực quan theo tiêu chuẩn công nghiệp.
+- **Yêu cầu thực hiện:**
+  - Tạo một Dashboard mới gắn với Alias của thiết bị đã khởi tạo ở Bài 1.
+  - Cấu hình các Widget trực quan hóa:
+    - **Digital Gauge Widget:** Hiển thị giá trị tức thời của Nhiệt độ và Độ ẩm với các dải màu cảnh báo trực quan (Xanh: Lý tưởng, Đỏ: Nguy hiểm).
+    - **Card Status Widget:** Hiển thị cường độ ánh sáng tức thời.
+    - **Time-series Line Chart:** Biểu đồ đường thể hiện sự biến thiên của các thông số theo thời gian thực, cho phép phóng to/thu nhỏ và chọn khoảng thời gian khảo sát.
+- **Kiểm chứng:** Dashboard tự động cập nhật động mỗi khi thiết bị biên gửi gói tin Telemetry lên.
 
-### Bai 4: Dieu khien thiet bi tu xa bang co che RPC (Two-Way RPC Control)
-- **Muc tieu:** Hien thuc co che dieu khien hai chieu thoi gian thuc tu Web Dashboard ve thiet bi chap hanh.
-- **Yeu cau thuc hien:**
-  - Bo sung cac Widget nut gat (Control Switch) tren Dashboard de dieu khien 3 thiet bi ngoai vi: `LED`, `PUMP` (May bom), `FAN` (Quat gio).
-  - Thiet bi bien subscribe vao topic `v1/devices/me/rpc/request/+`.
-  - Khi nguoi dung thao tac tren Dashboard, may chu Cloud gui yeu cau RPC co cau truc:
+### Bài 4: Điều khiển thiết bị từ xa bằng cơ chế RPC (Two-Way RPC Control)
+- **Mục tiêu:** Hiện thực cơ chế điều khiển hai chiều thời gian thực từ Web Dashboard về thiết bị chấp hành.
+- **Yêu cầu thực hiện:**
+  - Bổ sung các Widget nút gạt (Control Switch) trên Dashboard để điều khiển 3 thiết bị ngoại vi: `LED`, `PUMP` (Máy bơm), `FAN` (Quạt gió).
+  - Thiết bị biên subscribe vào topic `v1/devices/me/rpc/request/+`.
+  - Khi người dùng thao tác trên Dashboard, máy chủ Cloud gửi yêu cầu RPC có cấu trúc:
     ```json
     {
       "method": "setDeviceState",
       "params": { "device": "PUMP", "status": true }
     }
     ```
-  - Thiet bi trich xuat `request_id`, cap nhat trang thai phan cung va bat buoc phai publish goi phan hoi ve topic `v1/devices/me/rpc/response/{request_id}`:
+  - Thiết bị trích xuất `request_id`, cập nhật trạng thái phần cứng và bắt buộc phải publish gói phản hồi về topic `v1/devices/me/rpc/response/{request_id}`:
     ```json
     { "success": true, "device": "PUMP", "status": true }
     ```
-- **Kiem chung:** Nut gat tren Dashboard khong bi nhay nguoc ve vi tri cu (nho nhan duoc phan hoi hop le), thiet bi chap hanh chuyen trang thai tuc thi.
+- **Kiểm chứng:** Nút gạt trên Dashboard không bị nhảy ngược về vị trí cũ (nhờ nhận được phản hồi hợp lệ), thiết bị chấp hành chuyển trạng thái tức thì.
 
-### Bai 5: Chia se Dashboard cong khai va quan ly phan quyen (Public Dashboard Access)
-- **Muc tieu:** Xuat ban giao dien Dashboard de giam sat tu xa ma khong can dang nhap tai khoan quan tri.
-- **Yeu cau thuc hien:**
-  - Bat tinh nang **Make Dashboard Public** trong phan quan tri CoreIOT.
-  - Sao chep duong dan lien ket cong khai (Public URL kem token truy cap).
-  - Thu nghiem mo tren trinh duyet an danh (Incognito Mode) de dam bao bat ky nguoi dung nao co lien ket deu co the xem duoc so lieu thoi gian thuc.
-- **Kiem chung:** Dashboard hien thi day du cac widget do dac ma khong yeu cau nhap Mat khau hay Token quan tri.
+### Bài 5: Chia sẻ Dashboard công khai và quản lý phân quyền (Public Dashboard Access)
+- **Mục tiêu:** Xuất bản giao diện Dashboard để giám sát từ xa mà không cần đăng nhập tài khoản quản trị.
+- **Yêu cầu thực hiện:**
+  - Bật tính năng **Make Dashboard Public** trong phần quản trị CoreIOT.
+  - Sao chép đường dẫn liên kết công khai (Public URL kèm token truy cập).
+  - Thử nghiệm mở trên trình duyệt ẩn danh (Incognito Mode) để đảm bảo bất kỳ người dùng nào có liên kết đều có thể xem được số liệu thời gian thực.
+- **Kiểm chứng:** Dashboard hiển thị đầy đủ các widget đo đạc mà không yêu cầu nhập Mật khẩu hay Token quản trị.
 
 ---
 
-## 4. Huong dan chay Ma nguon Kiem thu (Python Client)
+## 4. Hướng dẫn chạy Mã nguồn Kiểm thử (Python Client)
 
-Tu thu muc goc cua nhanh, thuc hien cai dat thu vien va khoi chay thiet bi:
+Từ thư mục gốc của nhánh, thực hiện cài đặt thư viện và khởi chạy thiết bị:
 
 ```bash
-# Cai dat thu vien paho-mqtt
+# Cài đặt thư viện paho-mqtt
 pip install paho-mqtt
 
-# Chay thiet bi gia lap IoT
+# Chạy thiết bị giả lập IoT
 python lab1_device.py
 ```
 
 ---
 
-## 5. Quy tac ky thuat va Luu y quan trong
+## 5. Quy tắc kỹ thuật và Lưu ý quan trọng
 
-1. **Access Token bao mat:** Khong de lo Token thiet bi ra ngoai. Token phai dai toi thieu 12 ky tu de tranh bi brute-force.
-2. **QoS (Quality of Service):** Truyen Telemetry nen su dung `QoS = 0` (hoac `QoS = 1`) de dam bao toc do toi uu.
-3. **RPC Timeout:** Neu thiet bi khong gui phan hoi ve `v1/devices/me/rpc/response/{id}` trong vong 5000 ms, Dashboard se bao loi Timeout va giao dien nut gat se bi tra nguoc lai ve trang thai cu.
+1. **Access Token bảo mật:** Không để lộ Token thiết bị ra ngoài. Token phải dài tối thiểu 12 ký tự để tránh bị brute-force.
+2. **QoS (Quality of Service):** Truyền Telemetry nên sử dụng `QoS = 0` (hoặc `QoS = 1`) để đảm bảo tốc độ tối ưu.
+3. **RPC Timeout:** Nếu thiết bị không gửi phản hồi về `v1/devices/me/rpc/response/{id}` trong vòng 5000 ms, Dashboard sẽ báo lỗi Timeout và giao diện nút gạt sẽ bị trả ngược lại về trạng thái cũ.
