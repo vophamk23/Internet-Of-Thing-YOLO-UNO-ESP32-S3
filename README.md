@@ -1,107 +1,107 @@
-# LAB 2: EMBEDDED IOT PROGRAMMING AND FREERTOS MULTITASKING (GPIO & NEOPIXEL)
+# LAB 2: LẬP TRÌNH NHÚNG IOT VÀ ĐA NHIỆM FREERTOS TRÊN ESP32 (GPIO & NEOPIXEL)
 
-Khoa Khoa hoc va Ky thuat May tinh - Truong Dai hoc Bach Khoa, DHQG-HCM  
-Mon hoc: Internet van vat (CO3061 / CO3062)  
-Nhanh Git: `lab2_gpio_neopixel`  
-Nen tang: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
-Moi truong: PlatformIO IDE (Framework Arduino for ESP32 & FreeRTOS)  
-
----
-
-## 1. Muc tieu thi nghiem
-
-1. Nam vung kien truc phan cung ngoai vi GPIO tren vi dieu khien ESP32-S3:
-   - Che do hoat dong GPIO: `OUTPUT`, `INPUT`, `INPUT_PULLUP`.
-   - Giao thuc truyen thong 1 day toc do cao (Single-wire NZR protocol @ 800 kHz) dieu khien den LED thong minh WS2812B (NeoPixel RGB).
-2. Xoa bo viec su dung ham dung `delay()` gay chan CPU; thay the bang ky thuat dinh thoi phi chan (Non-blocking timing) voi ham `millis()`.
-3. Tiep can he dieu hanh thoi gian thuc FreeRTOS tich hop san trong loi ESP-IDF:
-   - Khoi tao tac vu doc lap voi `xTaskCreate()` hoac `xTaskCreatePinnedToCore()`.
-   - Su dung `vTaskDelay()` chuyen tac vu sang trang thai Blocked de tiet kiem tai nguyen CPU.
-   - Dong bo hoa du lieu giua cac tac vu song song thong qua bien dung chung duoc bao ve boi tu khoa `volatile`.
+Khoa Khoa học và Kỹ thuật Máy tính - Trường Đại học Bách Khoa, ĐHQG-HCM  
+Môn học: Internet vạn vật (CO3061 / CO3062)  
+Nhánh Git: `lab2_gpio_neopixel` (hoặc `lab2`)  
+Nền tảng: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
+Môi trường: PlatformIO IDE (Framework Arduino for ESP32 & FreeRTOS)  
 
 ---
 
-## 2. Phan bo chan phan cung (Pinout Configuration)
+## 1. Mục tiêu thí nghiệm
 
-| Ngoai vi / Tin hieu | Chan GPIO ESP32-S3 | Dinh dang tin hieu | Giai thich ky thuat |
+1. Nắm vững kiến trúc phần cứng ngoại vi GPIO trên vi điều khiển ESP32-S3:
+   - Chế độ hoạt động GPIO: `OUTPUT`, `INPUT`, `INPUT_PULLUP`.
+   - Giao thức truyền thông 1 dây tốc độ cao (Single-wire NZR protocol @ 800 kHz) điều khiển LED thông minh WS2812B (NeoPixel RGB).
+2. Xóa bỏ hoàn toàn việc sử dụng hàm dừng `delay()` gây chặn CPU; thay thế bằng kỹ thuật định thời phi chặn (Non-blocking timing) với hàm `millis()`.
+3. Tiếp cận hệ điều hành thời gian thực FreeRTOS tích hợp sẵn trong nhân ESP-IDF:
+   - Khởi tạo tác vụ độc lập với `xTaskCreate()` hoặc `xTaskCreatePinnedToCore()`.
+   - Sử dụng `vTaskDelay()` chuyển tác vụ sang trạng thái Blocked để nhường tài nguyên CPU.
+   - Đồng bộ hóa dữ liệu giữa các tác vụ song song thông qua biến dùng chung được bảo vệ bởi từ khóa `volatile`.
+
+---
+
+## 2. Phân bố chân phần cứng (Pinout Configuration)
+
+| Ngoại vi / Tín hiệu | Chân GPIO ESP32-S3 | Định dạng tín hiệu | Giải thích kỹ thuật |
 | :--- | :--- | :--- | :--- |
-| Onboard User LED | `GPIO 13` | Digital Output, Active-High | LED don bao hieu tren kit Yolo:UNO |
-| Onboard NeoPixel RGB | `GPIO 6` | Single-wire Data In (DIN) | IC WS2812B tich hop LED RGB 5050 |
-| Console UART | `USB-C CDC` | Serial Baudrate 115200 bps | In nhat ky he thong (Serial Monitor) |
+| Onboard User LED | `GPIO 13` | Digital Output, Active-High | LED đơn báo hiệu trên kit Yolo:UNO |
+| Onboard NeoPixel RGB | `GPIO 6` | Single-wire Data In (DIN) | IC WS2812B tích hợp LED RGB 5050 |
+| Console UART | `USB-C CDC` | Serial Baudrate 115200 bps | In nhật ký hệ thống (Serial Monitor) |
 
 ---
 
-## 3. Danh muc cac bai tap thuc hanh va Mo ta chi tiet
+## 3. Danh mục các bài tập thực hành và Mô tả chi tiết
 
-### Bai 1: Nhap nhay luan phien don gian (Asymmetric Blinking)
-- **Muc tieu:** Dieu khien LED don voi chu ky bat doi xung ma khong gay block he thong.
-- **Yeu cau thuc hien:**
-  - Khoi tao mot FreeRTOS Task chuyen biet: `Task_LED_Blink`.
-  - Dieu khien User LED (`GPIO 13`) hoat dong voi chu ky:
-    - Thoi gian SANG (ON): **1000 ms (1 giay)**.
-    - Thoi gian TAT (OFF): **2000 ms (2 giay)**.
-    - Tong chu ky thuc thi: 3000 ms (3 giay).
-  - Su dung `vTaskDelay(pdMS_TO_TICKS(1000))` de dinh thoi chinh xac theo xung nhip he thong.
-- **Kiem chung:** LED13 tren kit nhap nhay dung nhip, dong thoi Serial Monitor in thoi gian he thong khong bi tre.
+### Bài 1: Nhấp nháy luân phiên đơn giản (Asymmetric Blinking)
+- **Mục tiêu:** Điều khiển LED đơn với chu kỳ bất đối xứng mà không gây block hệ thống.
+- **Yêu cầu thực hiện:**
+  - Khởi tạo một FreeRTOS Task chuyên biệt: `Task_LED_Blink`.
+  - Điều khiển User LED (`GPIO 13`) hoạt động với chu kỳ:
+    - Thời gian SÁNG (ON): **1000 ms (1 giây)**.
+    - Thời gian TẮT (OFF): **2000 ms (2 giây)**.
+    - Tổng chu kỳ thực thi: 3000 ms (3 giây).
+  - Sử dụng `vTaskDelay(pdMS_TO_TICKS(1000))` để định thời chính xác theo xung nhịp hệ thống.
+- **Kiểm chứng:** LED13 trên kit nhấp nháy đúng nhịp, đồng thời Serial Monitor in thời gian hệ thống không bị trễ.
 
-### Bai 2: Phoi hop LED va NeoPixel (Dong bo qua bien dung chung)
-- **Muc tieu:** Phoi hop hai ngoai vi rieng biet dong bo trang thai thoi gian thuc.
-- **Yeu cau thuc hien:**
-  - Khai bao mot bien toan cuc dong bo: `volatile bool g_led_state = false;`.
-  - Luong chu (Master Task): Dieu khien LED13 nhay chu ky 2s SANG / 2s TAT, dong thoi ghi trang thai vao `g_led_state`.
-  - Luong phu (Slave Task): Dinh ky tham do bien `g_led_state`:
-    - Khi `g_led_state == true`: Sang den NeoPixel mau XANH LA (Green, RGB: `0, 255, 0`).
-    - Khi `g_led_state == false`: Tat den NeoPixel (RGB: `0, 0, 0`).
-- **Kiem chung:** Den NeoPixel bat va tat dong thoi hoan toan voi nhip chop cua LED13.
+### Bài 2: Phối hợp LED và NeoPixel (Đồng bộ qua biến dùng chung)
+- **Mục tiêu:** Phối hợp hai ngoại vi riêng biệt đồng bộ trạng thái thời gian thực.
+- **Yêu cầu thực hiện:**
+  - Khai báo một biến toàn cục đồng bộ: `volatile bool g_led_state = false;`.
+  - Luồng chủ (Master Task): Điều khiển LED13 nháy chu kỳ 2s SÁNG / 2s TẮT, đồng thời ghi trạng thái vào `g_led_state`.
+  - Luồng phụ (Slave Task): Định kỳ thăm dò biến `g_led_state`:
+    - Khi `g_led_state == true`: Sáng đèn NeoPixel màu XANH LÁ (Green, RGB: `0, 255, 0`).
+    - Khi `g_led_state == false`: Tắt đèn NeoPixel (RGB: `0, 0, 0`).
+- **Kiểm chứng:** Đèn NeoPixel bật và tắt đồng thời hoàn toàn với nhịp chớp của LED13.
 
-### Bai 3: Cac mau nhap nhay doc lap (Independent Blink Patterns)
-- **Muc tieu:** Chung minh tinh uu viet cua he dieu hanh da nhiem FreeRTOS khi chay cac chu ky thoi gian bat dong bo.
-- **Yeu cau thuc hien:**
-  - Tao 2 FreeRTOS Task doc lap chay song song tren ESP32-S3:
-    - **Task 1 (LED13):** Chu ky 2000 ms (Sang 1500 ms / Tat 500 ms).
-    - **Task 2 (NeoPixel):** Chu ky 3000 ms (Sang mau DO 1000 ms / Tat 2000 ms).
-  - Hai tac vu khong can thiep vao nhau; su chenh lech chu ky duoc bo lap lich FreeRTOS phan bo CPU muot ma.
-- **Kiem chung:** Quan sat thuc nghiem thay chu ky cua LED13 va NeoPixel hoan toan lech pha tu nhien ma khong bi dung hinh hoac nhay sai nhip.
+### Bài 3: Các mẫu nhấp nháy độc lập (Independent Blink Patterns)
+- **Mục tiêu:** Chứng minh tính ưu việt của hệ điều hành đa nhiệm FreeRTOS khi chạy các chu kỳ thời gian bất đồng bộ.
+- **Yêu cầu thực hiện:**
+  - Tạo 2 FreeRTOS Task độc lập chạy song song trên ESP32-S3:
+    - **Task 1 (LED13):** Chu kỳ 2000 ms (Sáng 1500 ms / Tắt 500 ms).
+    - **Task 2 (NeoPixel):** Chu kỳ 3000 ms (Sáng màu ĐỎ 1000 ms / Tắt 2000 ms).
+  - Hai tác vụ không can thiệp vào nhau; sự chênh lệch chu kỳ được bộ lập lịch FreeRTOS phân bổ CPU mượt mà.
+- **Kiểm chứng:** Quan sát thực nghiệm thấy chu kỳ của LED13 và NeoPixel hoàn toàn lệch pha tự nhiên mà không bị giật hay nhảy sai nhịp.
 
-### Bai 4: Chuoi mau NeoPixel nang cao (Advanced Rainbow Sequence)
-- **Muc tieu:** Khai thac toi da kha nang phoi mau RGB 24-bit tren den WS2812B.
-- **Yeu cau thuc hien:**
-  - Xay dung mot mang cau truc hoac may trang thai tuan tu chuyen doi 5 mau sac sac net, moi mau duy tri dung **3000 ms (3 giay)**:
-    1. **Mau DO (Red):** RGB `(255, 0, 0)`
-    2. **Mau VANG (Yellow):** RGB `(255, 255, 0)`
-    3. **Mau XANH LA (Green):** RGB `(0, 255, 0)`
-    4. **Mau XANH DUONG (Blue):** RGB `(0, 0, 255)`
-    5. **Mau TIM (Purple):** RGB `(128, 0, 128)`
-  - Sau khi ket thuc chuoi 5 mau, he thong tu dong lap lai tu dau.
-- **Kiem chung:** Mau sac tren NeoPixel chuyen doi ro rang, dung thu tu va khong bi giat.
+### Bài 4: Chuỗi màu NeoPixel nâng cao (Advanced Rainbow Sequence)
+- **Mục tiêu:** Khai thác tối đa khả năng phối màu RGB 24-bit trên đèn WS2812B.
+- **Yêu cầu thực hiện:**
+  - Xây dựng một mảng cấu trúc hoặc máy trạng thái tuần tự chuyển đổi 5 màu sắc sắc nét, mỗi màu duy trì đúng **3000 ms (3 giây)**:
+    1. **Màu ĐỎ (Red):** RGB `(255, 0, 0)`
+    2. **Màu VÀNG (Yellow):** RGB `(255, 255, 0)`
+    3. **Màu XANH LÁ (Green):** RGB `(0, 255, 0)`
+    4. **Màu XANH DƯƠNG (Blue):** RGB `(0, 0, 255)`
+    5. **Màu TÍM (Purple):** RGB `(128, 0, 128)`
+  - Sau khi kết thúc chuỗi 5 màu, hệ thống tự động lặp lại từ đầu.
+- **Kiểm chứng:** Màu sắc trên NeoPixel chuyển đổi sắc nét, đúng thứ tự và không bị trễ khung hình.
 
-### Bai 5: Tich hop chuyen che do hoat dong (Interactive Mode Switch)
-- **Muc tieu:** Ket hop ngat ngoai hoac may trang thai huu han (FSM) de chuyen doi linh hoat giua cac hieu ung den.
-- **Yeu cau thuc hien:**
-  - Tich hop them nut bam ngoai hoac phan tich ky tu dieu khien tu cong Serial Monitor.
-  - Chuyen doi qua lai giua Che do Don sac, Che do Cau vong va Che do Canh bao khan cap.
+### Bài 5: Tích hợp chuyển chế độ hoạt động (Interactive Mode Switch)
+- **Mục tiêu:** Kết hợp ngắt ngoài hoặc máy trạng thái hữu hạn (FSM) để chuyển đổi linh hoạt giữa các hiệu ứng đèn.
+- **Yêu cầu thực hiện:**
+  - Tích hợp thêm nút nhấn ngoài hoặc phân tích ký tự điều khiển từ cổng Serial Monitor.
+  - Chuyển đổi qua lại giữa Chế độ Đơn sắc, Chế độ Cầu vồng và Chế độ Cảnh báo khẩn cấp.
 
 ---
 
-## 4. Huong dan Bien dich va Nap chuong trinh
+## 4. Hướng dẫn Biên dịch và Nạp chương trình
 
-Tu thu muc goc cua ma nguon Lab 2 tren PlatformIO:
+Từ thư mục gốc của mã nguồn Lab 2 trên PlatformIO:
 
 ```bash
-# Bien dich chuong trinh
+# Biên dịch chương trình
 pio run
 
-# Nap vao kit Yolo:UNO
+# Nạp vào kit Yolo:UNO
 pio run --target upload
 
-# Mo cong Serial Monitor de kiem tra
+# Mở cổng Serial Monitor để kiểm tra
 pio device monitor -b 115200
 ```
 
 ---
 
-## 5. Quy tac ky thuat va Luu y
+## 5. Quy tắc kỹ thuật và Lưu ý
 
-1. **Do sang NeoPixel:** Khong dat do sang LED WS2812B o muc 100% khi cap nguon tu cong USB vi dong tieu thu cao co the gay sut ap ESP32; khuyen nghi dat `pixels.setBrightness(50)`.
-2. **Khai bao bien toan cuc:** Moi bien toan cuc duoc ghi boi mot task va doc boi task khac bat buoc phai khai bao `volatile` de tranh trinh bien dich toi uu hoa gia tri vao thanh ghi.
-3. **Stack Size trong FreeRTOS:** Khi su dung `xTaskCreate`, can cap phat ngan xep toi thieu `2048` bytes cho cac tac vu co goi lenh `Serial.printf()` de tranh loi tràn bộ nhớ (Stack Overflow Panic).
+1. **Độ sáng NeoPixel:** Không đặt độ sáng LED WS2812B ở mức 100% khi cấp nguồn từ cổng USB vì dòng tiêu thụ cao có thể gây sụt áp ESP32; khuyến nghị đặt `pixels.setBrightness(50)`.
+2. **Khai báo biến toàn cục:** Mọi biến toàn cục được ghi bởi một task và đọc bởi task khác bắt buộc phải khai báo `volatile` để tránh trình biên dịch tối ưu hóa giá trị vào thanh ghi.
+3. **Stack Size trong FreeRTOS:** Khi sử dụng `xTaskCreate`, cần cấp phát ngăn xếp tối thiểu `2048` bytes cho các tác vụ có gọi lệnh `Serial.printf()` để tránh lỗi tràn bộ nhớ (Stack Overflow Panic).
