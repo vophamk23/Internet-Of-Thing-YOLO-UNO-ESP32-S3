@@ -1,4 +1,4 @@
-# INTERNET VẠN VẬT (IoT) - ỨNG DỤNG TRÊN YOLO:UNO ESP32-S3
+# INTERNET VẠN VẬT (IoT) - YOLO:UNO ESP32-S3
 
 Khoa Khoa học và Kỹ thuật Máy tính - Trường Đại học Bách Khoa, ĐHQG-HCM  
 Môn học: Internet vạn vật (CO3061 / CO3062)  
