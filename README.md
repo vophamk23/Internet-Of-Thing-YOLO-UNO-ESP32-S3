@@ -1,153 +1,131 @@
-# INTERNET OF THINGS (IoT) - YOLO:UNO ESP32-S3 APPLICATIONS
+# FINAL CAPSTONE ASSIGNMENT: FULL-STACK INTERNET OF THINGS SYSTEM DESIGN
 
 Khoa Khoa hoc va Ky thuat May tinh - Truong Dai hoc Bach Khoa, DHQG-HCM  
 Mon hoc: Internet van vat (CO3061 / CO3062)  
-Nen tang phan cung: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
-Moi truong phat trien: PlatformIO IDE (Arduino Core for ESP32 / FreeRTOS)  
+Nhanh Git: `assignment`  
+Nen tang: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
+Moi truong: PlatformIO IDE (Framework Arduino for ESP32 & FreeRTOS)  
 
 ---
 
-## 1. Tong quan du an
+## 1. Tong quan de tai Bai tap lon
 
-Repository nay chua toan bo tai lieu thiet ke, ma nguon mau va kien truc thuc hanh cho khoa hoc Internet van vat (IoT). Khoa hoc huong toi viec xay dung he thong IoT toan dien tu thiet bi bien (Edge Devices) den ha tang dien toan dam may (Cloud IoT Platforms), bao gom:
-- Giao thuc truyen thong mang cong nghiep nhe MQTT (Message Queuing Telemetry Transport) va nen tang quan ly CoreIOT / ThingsBoard.
-- Lap trinh nhung dieu khien ngoai vi GPIO, den thong minh NeoPixel RGB (WS2812B) va da nhiem thoi gian thuc FreeRTOS.
-- Giao tiep truyen thong noi tiep I2C voi cam bien moi truong DHT20 va man hinh hien thi LCD 1602.
-- Xay dung may chu nhung bat dong bo (Embedded Asynchronous Web Server) phuc vu RESTful API JSON, giam sat Dashboard va cap nhat firmware tu xa qua mang (OTA Update).
-- Thiet ke va tich hop he thong IoT thuc te trong Do an cuoi ky (Capstone Assignment).
+Nhanh `assignment` danh rieng cho viec nghien cuu, thiet ke kien truc, lap trinh va nghiem thu Do an He thong Internet van vat (IoT) cuoi ky. De tai yeu cau phat trien mot giai phap he thong IoT hoan chinh (Full-stack IoT System) giai quyet cac bai toan thuc te nhu: Nong nghiep thong minh (Smart Agriculture), Toa nha thong minh (Smart Building), hoac Giam sat moi truong cong nghiep (Industrial Environmental Monitoring).
 
----
-
-## 2. Cau truc phan nhanh (Git Branching Strategy)
-
-Ma nguon cua du an duoc phan bo khoa hoc thanh 6 nhanh tuong ung voi cac giai doan thuc hanh va nghien cuu:
-
-| Ten nhanh | Noi dung chuyen biet | Trinh do / Muc tieu |
-| :--- | :--- | :--- |
-| `main` | Nhanh goc chua tai lieu tong quan, kien truc toan khoa va dac ta phan cung Yolo:UNO. | Tham chieu chung toan khoa |
-| `lab1_coreiot` | Nen tang IoT Cloud & Giao thuc MQTT (CoreIOT, Telemetry, RPC hai chieu, Dashboard). | Dien toan dam may & MQTT |
-| `lab2_gpio_neopixel` | Lap trinh nhung IoT & Da nhiem FreeRTOS tren ESP32 (GPIO LED, WS2812B, Non-blocking timing). | Lap trinh phan cung & RTOS |
-| `lab3_dht20_lcd` | Giao tiep cam bien I2C & Hien thi (Cam bien nhiet am DHT20, LCD 1602, Bao an Fail-Safe). | Giao thuc I2C & Cam bien |
-| `lab4_webserver` | Embedded Web Server & RESTful API (ESPAsyncWebServer, Moving Average, Hysteresis, OTA). | Web Server & Mang khong day |
-| `assignment` | Do an He thong IoT hoan chinh (Smart Farm / Smart Home / Giam sat moi truong). | Do an tong hop (Capstone) |
+He thong phai tich hop dong bo 4 yeu to cot loi:
+- **Thu thap du lieu da cam bien (Multi-Sensor Edge Node):** Doc du lieu nhiet do, do am (DHT20 qua I2C), do am dat (Soil Moisture qua ADC), cuong do anh sang (LDR/I2C) voi bo loc nhieu so (Digital Filtering).
+- **Xu ly cuc bo va Da nhiem FreeRTOS (Edge Processing & RTOS):** Ap dung kien truc da tac vu chia nho tai nguyen cho loi kep ESP32-S3, thuat toan dieu khien tu dong kieu FSM va co che tre Hysteresis chong rung tai chap hanh.
+- **Truyen thong da kenh (Multi-channel Connectivity):** Ket noi Wi-Fi tu dong khoi phuc (Auto-reconnect), giao thuc MQTT gui Telemetry va nhan lenh RPC hai chieu len CoreIOT / ThingsBoard, dong thoi phuc vu may chu Web Server cuc bo.
+- **Giam sat, Dieu khien va Bao an (Dashboard, HMI & Fail-Safe):** Dashboard truc quan hoa tren Cloud, co che canh bao su co tu dong cat Role va tinh nang nang cap phan mem qua mang khong day (ElegantOTA).
 
 ---
 
-## 3. Dac ta phan cung Bo mach Yolo:UNO
+## 2. Kien truc He thong phan tang (End-to-End IoT Architecture)
 
-Kit Yolo:UNO la bo mach phat trien IoT tieu chuan duoc trang bi vi dieu khien the he moi ESP32-S3:
-
-### 3.1. Thong so ky thuat vi dieu khien ESP32-S3
-- Loi xu ly: Dual-core 32-bit Xtensa LX7 chay o tan so len den 240 MHz.
-- Tap lenh ho tro: Vector Instructions phuc vu tang toc tinh toan AI/DSP.
-- Bo nho:
-  - ROM: 384 KB (Bootloader va loi he thong).
-  - SRAM: 512 KB (Bo nho noi).
-  - External SPI Flash: 8 MB.
-  - External PSRAM: 8 MB (Octal SPI).
-- Ket noi khong day:
-  - Wi-Fi: 802.11 b/g/n (2.4 GHz) ho tro che do Station va SoftAP.
-  - Bluetooth: Bluetooth 5.0 Low Energy (BLE) va Bluetooth Mesh.
-
-### 3.2. Bang anh xa chan ngoai vi tren Yolo:UNO (Pinout Mapping)
-
-| Ngoai vi / Tin hieu | Chan GPIO ESP32-S3 | Chuc nang & Dinh dang logic |
-| :--- | :--- | :--- |
-| Onboard User LED | `GPIO 13` | Digital Output, Active-High |
-| Onboard NeoPixel RGB | `GPIO 6` | Single-wire 800 kHz protocol (WS2812B) |
-| I2C Serial Data (SDA) | `GPIO 11` | Giao tiep I2C (DHT20, LCD 1602, RTC) |
-| I2C Serial Clock (SCL) | `GPIO 12` | Xung nhip I2C (100 kHz standard / 400 kHz fast) |
-| Cong Console Debug | USB-C (Native CDC / UART0) | Giam sat Serial Monitor (Baudrate: 115200) |
-
----
-
-## 4. Yeu cau moi truong va Cai dat
-
-### 4.1. Cong cu phat trien (IDE & Toolchain)
-- Trinh soan thao ma nguon: Visual Studio Code.
-- Moi truong phat trien nhung: Extension **PlatformIO IDE**.
-- Framework bien dich: `framework = arduino` voi `platform = espressif32`.
-- Trinh thong dich Python: Python 3.9+ (phuc vu chay script MQTT test cho Lab 1).
-
-### 4.2. File cau hinh `platformio.ini` tieu chuan
-Moi du an trong cac lab su dung file cau hinh mau sau:
-
-```ini
-[env:yolo_uno]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
-monitor_speed = 115200
-upload_speed = 921600
-
-build_flags = 
-    -DARDUINO_USB_MODE=1
-    -DARDUINO_USB_CDC_ON_BOOT=1
-
-lib_deps = 
-    adafruit/Adafruit NeoPixel @ ^1.12.0
-    robtillaart/DHT20 @ ^0.3.1
-    marcoschwartz/LiquidCrystal_I2C @ ^1.1.4
-    bblanchon/ArduinoJson @ ^6.21.4
-    me-no-dev/ESPAsyncWebServer @ ^3.6.0
-    me-no-dev/AsyncTCP @ ^3.3.2
-    knolleary/PubSubClient @ ^2.8
-    ayushsharma82/ElegantOTA @ ^3.1.6
+```
++--------------------------------------------------------------------------+
+|                  CLOUD & APPLICATION LAYER (CoreIOT / ThingsBoard)       |
+|  - Real-time Telemetry Dashboard (Gauges, Charts, Cards)                 |
+|  - Bidirectional RPC Controls (Relay / Fan / Pump switches)              |
+|  - Rule Engine (Email / SMS / Webhook Alarm Alerts)                      |
++--------------------------------------------------------------------------+
+                                    ^  | MQTT Protocol (Port 1883)
+                                    |  v (Telemetry / RPC / Attributes)
++--------------------------------------------------------------------------+
+|                  COMMUNICATION & SERVICES LAYER (ESP32-S3)               |
+|  - Wi-Fi Station Manager (Auto-reconnect with Exponential Backoff)       |
+|  - Embedded Asynchronous HTTP Web Server (RESTful API & Local Dashboard) |
+|  - ElegantOTA Remote Firmware Update Service                             |
++--------------------------------------------------------------------------+
+|                  EDGE PROCESSING & FREERTOS RUNTIME                      |
+|  - FreeRTOS Tasks: Sensor Acquisition, FSM Controller, Network Manager   |
+|  - Thread-Safe IPC: Mutexes, Queues, Event Flags                         |
+|  - Digital Signal Processing: Moving Average (10 samples) & Hysteresis   |
++--------------------------------------------------------------------------+
+|                  PHYSICAL HARDWARE & TRANSDUCERS (Yolo:UNO)              |
+|  - Sensors: DHT20 (I2C: SDA=11, SCL=12), Soil Moisture (ADC), Light LDR  |
+|  - Actuators: Solid State Relay / Electro-mechanical Relay, NeoPixel RGB |
++--------------------------------------------------------------------------+
 ```
 
 ---
 
-## 5. Huong dan su dung Repository
+## 3. Cau truc thu muc ma nguon tieu chuan (Project Structure)
 
-### 5.1. Clone ma nguon
-```bash
-git clone https://github.com/vophamk23/INTERNET-OF-THINGS.git
-cd INTERNET-OF-THINGS
+Moi nhom phat trien do an duy tri to chuc thu muc khoa hoc nhu sau:
+
+```
+assignment/
+├── docs/                                  # Tai lieu dac ta he thong
+│   ├── system_requirements_spec.md        # Dac ta yeu cau he thong (SRS)
+│   ├── hardware_schematic_wiring.md       # So do nguyen ly va ket noi chan
+│   └── mqtt_api_interface_spec.md         # Dinh nghia JSON schema va MQTT topics
+├── firmware/                              # Du an PlatformIO nap cho bo mach Yolo:UNO
+│   ├── platformio.ini                     # Cau hinh thu vien va board ESP32-S3
+│   ├── include/
+│   │   ├── config.h                       # Wi-Fi credentials, MQTT Tokens, Thresholds
+│   │   ├── sensor_manager.h               # Thu thap cam bien va bo loc Moving Average
+│   │   ├── actuator_controller.h          # Dieu khien Relay, Quat, May bom, NeoPixel
+│   │   ├── fsm_controller.h               # May trang thai dieu khien tu dong
+│   │   ├── mqtt_handler.h                 # Truyen thong MQTT va RPC voi CoreIOT
+│   │   └── web_server_handler.h           # Web server cuc bo va RESTful API
+│   └── src/
+│       ├── main.cpp                       # Setup FreeRTOS tasks va khoi dong he thong
+│       ├── sensor_manager.cpp
+│       ├── actuator_controller.cpp
+│       ├── fsm_controller.cpp
+│       ├── mqtt_handler.cpp
+│       └── web_server_handler.cpp
+├── dashboard/                             # Cau hinh truc quan hoa tren Cloud
+│   └── coreiot_dashboard_layout.json      # File xuat ban layout Dashboard CoreIOT
+└── README.md                              # Tai lieu huong dan cua nhanh assignment
 ```
 
-### 5.2. Chuyen doi giua cac nhanh
-De lam viec voi tung bai thuc hanh cu the, su dung lenh checkout cua Git:
+---
+
+## 4. Quy hoach Tac vu FreeRTOS va Phan bo Tai nguyen (Task Planning)
+
+De dam bao tinh thoi gian thuc va khong xay ra hien tuong nghe nghen tai nguyen, cac tac vu duoc phan bo nhu sau:
+
+| Ten Tac vu (Task Name) | Chuc nang ky thuat | Core ESP32 | Priority | Stack Size | Co che dong bo |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `Task_Sensors` | Doc I2C DHT20, ADC dat dinh ky 1000 ms | Core 1 | 3 | 3072 B | `vTaskDelay`, `Mutex` |
+| `Task_Control_FSM` | Tinh toan Hysteresis va may trang thai tu dong | Core 1 | 4 (Cao) | 2048 B | `Mutex`, `Queue` |
+| `Task_Actuators` | Dieu khien Relay va NeoPixel canh bao | Core 1 | 2 | 2048 B | `vTaskDelay`, `Queue` |
+| `Task_Network_MQTT` | Publish Telemetry moi 3s, xu ly goi RPC | Core 0 | 2 | 4096 B | `PubSubClient`, `Mutex` |
+| `Task_WebServer` | Phuc vu REST API va Dashboard cuc bo | Core 0 | 1 (Thap) | 4096 B | `AsyncTCP`, non-blocking |
+
+---
+
+## 5. Cac Tinh nang An toan va Chong chiu su co (Reliability & Fail-Safe)
+
+1. **Tu dong ket noi lai Wi-Fi va MQTT (Auto-reconnect):** Khi song Wi-Fi bi ngat hoac may chu Broker bao tri, he thong tu dong thu lai sau moi khoang thoi gian tang dan (Exponential Backoff) ma khong bi dung tac vu dieu khien van hanh may bom.
+2. **Co che bao ve chong chay no (Fail-Safe Emergency):** Neu cam bien nhiet do bi loi hoac vuot qua nguong khan cap (> 55°C), he thong lap tuc ngat Relay may bom/den suoi, chuyen den NeoPixel sang che do nhap nhay mau Do canh bao va gui tin nhan khan cap len Cloud.
+3. **Thuat toan tre Hysteresis:** Bat buoc ap dung tren tat ca cac kenh dieu khien tu dong (Do am dat, Nhiet do) de bao ve tuoi tho cho Relay va Dong co.
+
+---
+
+## 6. Huong dan Bien dich va Nap chuong trinh
 
 ```bash
-# Xem danh sach toan bo cac nhanh
-git branch -a
+# Di chuyen vao thu muc firmware
+cd firmware
 
-# Chuyen sang Lab 1: Nen tang Cloud CoreIOT & MQTT
-git checkout lab1_coreiot
-
-# Chuyen sang Lab 2: Lap trinh nhung GPIO & NeoPixel
-git checkout lab2_gpio_neopixel
-
-# Chuyen sang Lab 3: Cam bien I2C DHT20 & LCD 1602
-git checkout lab3_dht20_lcd
-
-# Chuyen sang Lab 4: Embedded Web Server & RESTful API
-git checkout lab4_webserver
-
-# Chuyen sang Assignment: Do an he thong IoT cuoi ky
-git checkout assignment
-```
-
-### 5.3. Quy trinh bien dich va nap chuong trinh voi PlatformIO
-Tu thu muc goc cua tung du an:
-
-```bash
 # Bien dich ma nguon
 pio run
 
-# Nap firmware vao bo mach Yolo:UNO
+# Nap vao kit Yolo:UNO
 pio run --target upload
 
-# Mo cua so Serial Monitor de theo doi nhat ky he thong
-pio device monitor
+# Theo doi Serial Monitor
+pio device monitor -b 115200
 ```
 
 ---
 
-## 6. Danh muc tai lieu tham khao
+## 7. Tieu chi Danh gia va Nghiem thu Do an
 
-1. ESP32-S3 Technical Reference Manual: Espressif Systems.
-2. PlatformIO Documentation: https://docs.platformio.org/
-3. CoreIOT / ThingsBoard IoT Platform Documentation: https://thingsboard.io/docs/
-4. FreeRTOS Real-time Kernel Documentation: https://www.freertos.org/
-5. Giao trinh Thuc hanh Internet van vat - Khoa KH&KT May tinh, DH Bach Khoa TP.HCM.
+- **Kha nang van hanh thuc te (40%):** He thong chay on dinh lien tuc it nhat 24 gio, du lieu truyen deu dan len CoreIOT Cloud ma khong bi treo.
+- **Dap ung thoi gian thuc va RPC (25%):** Nguoi dung thao tac bat tat thiet bi tren Dashboard phan hoi duoi 500 ms; che do tu dong chuyen pha chinh xac.
+- **Kien truc ma nguon va Module hoa (20%):** Tuan thu nguyen ly Clean Code, chia file logic ro rang, su dung FreeRTOS dung chuan va khong dung cac ham block `delay()`.
+- **Tai lieu ky thuat va Bao cao (15%):** Ban bao cao chi tiet, day du so do kien truc, bieu do FSM va nhat ky thuc nghiem.
