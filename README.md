@@ -1,76 +1,76 @@
-# INTERNET OF THINGS (IoT) - YOLO:UNO ESP32-S3 APPLICATIONS
+# INTERNET VẠN VẬT (IoT) - ỨNG DỤNG TRÊN YOLO:UNO ESP32-S3
 
-Khoa Khoa hoc va Ky thuat May tinh - Truong Dai hoc Bach Khoa, DHQG-HCM  
-Mon hoc: Internet van vat (CO3061 / CO3062)  
-Nen tang phan cung: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
-Moi truong phat trien: PlatformIO IDE (Arduino Core for ESP32 / FreeRTOS)  
-
----
-
-## 1. Tong quan du an
-
-Repository nay chua toan bo tai lieu thiet ke, ma nguon mau va kien truc thuc hanh cho khoa hoc Internet van vat (IoT). Khoa hoc huong toi viec xay dung he thong IoT toan dien tu thiet bi bien (Edge Devices) den ha tang dien toan dam may (Cloud IoT Platforms), bao gom:
-- Giao thuc truyen thong mang cong nghiep nhe MQTT (Message Queuing Telemetry Transport) va nen tang quan ly CoreIOT / ThingsBoard.
-- Lap trinh nhung dieu khien ngoai vi GPIO, den thong minh NeoPixel RGB (WS2812B) va da nhiem thoi gian thuc FreeRTOS.
-- Giao tiep truyen thong noi tiep I2C voi cam bien moi truong DHT20 va man hinh hien thi LCD 1602.
-- Xay dung may chu nhung bat dong bo (Embedded Asynchronous Web Server) phuc vu RESTful API JSON, giam sat Dashboard va cap nhat firmware tu xa qua mang (OTA Update).
-- Thiet ke va tich hop he thong IoT thuc te trong Do an cuoi ky (Capstone Assignment).
+Khoa Khoa học và Kỹ thuật Máy tính - Trường Đại học Bách Khoa, ĐHQG-HCM  
+Môn học: Internet vạn vật (CO3061 / CO3062)  
+Nền tảng phần cứng: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
+Môi trường phát triển: PlatformIO IDE (Arduino Core for ESP32 / FreeRTOS)  
 
 ---
 
-## 2. Cau truc phan nhanh (Git Branching Strategy)
+## 1. Tổng quan dự án
 
-Ma nguon cua du an duoc phan bo khoa hoc thanh 6 nhanh tuong ung voi cac giai doan thuc hanh va nghien cuu:
+Repository này chứa toàn bộ tài liệu thiết kế, mã nguồn mẫu và kiến trúc thực hành cho khóa học Internet vạn vật (IoT). Khóa học hướng tới việc xây dựng hệ sinh thái IoT toàn diện từ thiết bị biên (Edge Devices) đến hạ tầng điện toán đám mây (Cloud IoT Platforms), bao gồm:
+- Giao thức truyền thông mạng công nghiệp nhẹ MQTT (Message Queuing Telemetry Transport) và nền tảng quản lý CoreIOT / ThingsBoard.
+- Lập trình nhúng điều khiển ngoại vi GPIO, đèn thông minh NeoPixel RGB (WS2812B) và đa nhiệm thời gian thực FreeRTOS.
+- Giao tiếp truyền thông nối tiếp I2C với cảm biến môi trường DHT20 và màn hình hiển thị LCD 1602.
+- Xây dựng máy chủ nhúng bất đồng bộ (Embedded Asynchronous Web Server) phục vụ RESTful API JSON, giám sát Dashboard và cập nhật firmware từ xa qua mạng (OTA Update).
+- Thiết kế và tích hợp hệ thống IoT thực tế trong Đồ án cuối kỳ (Capstone Assignment).
 
-| Ten nhanh | Noi dung chuyen biet | Trinh do / Muc tieu |
+---
+
+## 2. Cấu trúc phân nhánh (Git Branching Strategy)
+
+Mã nguồn của dự án được phân bổ khoa học thành các nhánh tương ứng với từng giai đoạn học tập và phát triển:
+
+| Tên nhánh | Nội dung chuyên biệt | Mục tiêu đào tạo |
 | :--- | :--- | :--- |
-| `main` | Nhanh goc chua tai lieu tong quan, kien truc toan khoa va dac ta phan cung Yolo:UNO. | Tham chieu chung toan khoa |
-| `lab1_coreiot` | Nen tang IoT Cloud & Giao thuc MQTT (CoreIOT, Telemetry, RPC hai chieu, Dashboard). | Dien toan dam may & MQTT |
-| `lab2_gpio_neopixel` | Lap trinh nhung IoT & Da nhiem FreeRTOS tren ESP32 (GPIO LED, WS2812B, Non-blocking timing). | Lap trinh phan cung & RTOS |
-| `lab3_dht20_lcd` | Giao tiep cam bien I2C & Hien thi (Cam bien nhiet am DHT20, LCD 1602, Bao an Fail-Safe). | Giao thuc I2C & Cam bien |
-| `lab4_webserver` | Embedded Web Server & RESTful API (ESPAsyncWebServer, Moving Average, Hysteresis, OTA). | Web Server & Mang khong day |
-| `assignment` | Do an He thong IoT hoan chinh (Smart Farm / Smart Home / Giam sat moi truong). | Do an tong hop (Capstone) |
+| `main` | Nhánh gốc chứa tài liệu tổng quan, kiến trúc toàn khóa và đặc tả phần cứng Yolo:UNO. | Tham chiếu chung toàn khóa |
+| `lab1_coreiot` (hoặc `lab1`) | Nền tảng IoT Cloud & Giao thức MQTT (CoreIOT, Telemetry, RPC hai chiều, Dashboard). | Điện toán đám mây & MQTT |
+| `lab2_gpio_neopixel` (hoặc `lab2`) | Lập trình nhúng IoT & Đa nhiệm FreeRTOS trên ESP32 (GPIO LED, WS2812B, Non-blocking timing). | Lập trình phần cứng & RTOS |
+| `lab3_dht20_lcd` (hoặc `lab3`) | Giao tiếp cảm biến I2C & Hiển thị (Cảm biến nhiệt ẩm DHT20, LCD 1602, Bảo an Fail-Safe). | Giao thức I2C & Cảm biến |
+| `lab4_webserver` (hoặc `lab4`) | Embedded Web Server & RESTful API (ESPAsyncWebServer, Moving Average, Hysteresis, OTA). | Web Server & Mạng không dây |
+| `assignment` | Đồ án Hệ thống IoT hoàn chỉnh (Smart Farm / Smart Home / Giám sát môi trường). | Đồ án tổng hợp (Capstone) |
 
 ---
 
-## 3. Dac ta phan cung Bo mach Yolo:UNO
+## 3. Đặc tả phần cứng Bo mạch Yolo:UNO
 
-Kit Yolo:UNO la bo mach phat trien IoT tieu chuan duoc trang bi vi dieu khien the he moi ESP32-S3:
+Kit Yolo:UNO là bo mạch phát triển IoT tiêu chuẩn được trang bị vi điều khiển thế hệ mới ESP32-S3:
 
-### 3.1. Thong so ky thuat vi dieu khien ESP32-S3
-- Loi xu ly: Dual-core 32-bit Xtensa LX7 chay o tan so len den 240 MHz.
-- Tap lenh ho tro: Vector Instructions phuc vu tang toc tinh toan AI/DSP.
-- Bo nho:
-  - ROM: 384 KB (Bootloader va loi he thong).
-  - SRAM: 512 KB (Bo nho noi).
+### 3.1. Thông số kỹ thuật vi điều khiển ESP32-S3
+- Lõi xử lý: Dual-core 32-bit Xtensa LX7 hoạt động ở tần số lên đến 240 MHz.
+- Tập lệnh hỗ trợ: Vector Instructions phục vụ tăng tốc tính toán AI/DSP.
+- Bộ nhớ:
+  - ROM: 384 KB (Bootloader và lõi hệ thống).
+  - SRAM: 512 KB (Bộ nhớ nội).
   - External SPI Flash: 8 MB.
   - External PSRAM: 8 MB (Octal SPI).
-- Ket noi khong day:
-  - Wi-Fi: 802.11 b/g/n (2.4 GHz) ho tro che do Station va SoftAP.
-  - Bluetooth: Bluetooth 5.0 Low Energy (BLE) va Bluetooth Mesh.
+- Kết nối không dây:
+  - Wi-Fi: 802.11 b/g/n (2.4 GHz) hỗ trợ chế độ Station (STA) và SoftAP.
+  - Bluetooth: Bluetooth 5.0 Low Energy (BLE) và Bluetooth Mesh.
 
-### 3.2. Bang anh xa chan ngoai vi tren Yolo:UNO (Pinout Mapping)
+### 3.2. Bảng ánh xạ chân ngoại vi trên Yolo:UNO (Pinout Mapping)
 
-| Ngoai vi / Tin hieu | Chan GPIO ESP32-S3 | Chuc nang & Dinh dang logic |
+| Ngoại vi / Tín hiệu | Chân GPIO ESP32-S3 | Chức năng & Định dạng logic |
 | :--- | :--- | :--- |
 | Onboard User LED | `GPIO 13` | Digital Output, Active-High |
 | Onboard NeoPixel RGB | `GPIO 6` | Single-wire 800 kHz protocol (WS2812B) |
-| I2C Serial Data (SDA) | `GPIO 11` | Giao tiep I2C (DHT20, LCD 1602, RTC) |
-| I2C Serial Clock (SCL) | `GPIO 12` | Xung nhip I2C (100 kHz standard / 400 kHz fast) |
-| Cong Console Debug | USB-C (Native CDC / UART0) | Giam sat Serial Monitor (Baudrate: 115200) |
+| I2C Serial Data (SDA) | `GPIO 11` | Giao tiếp I2C (DHT20, LCD 1602, RTC) |
+| I2C Serial Clock (SCL) | `GPIO 12` | Xung nhịp I2C (100 kHz standard / 400 kHz fast) |
+| Cổng Console Debug | USB-C (Native CDC / UART0) | Giám sát Serial Monitor (Baudrate: 115200) |
 
 ---
 
-## 4. Yeu cau moi truong va Cai dat
+## 4. Yêu cầu môi trường và Cài đặt
 
-### 4.1. Cong cu phat trien (IDE & Toolchain)
-- Trinh soan thao ma nguon: Visual Studio Code.
-- Moi truong phat trien nhung: Extension **PlatformIO IDE**.
-- Framework bien dich: `framework = arduino` voi `platform = espressif32`.
-- Trinh thong dich Python: Python 3.9+ (phuc vu chay script MQTT test cho Lab 1).
+### 4.1. Công cụ phát triển (IDE & Toolchain)
+- Trình soạn thảo mã nguồn: Visual Studio Code.
+- Môi trường phát triển nhúng: Extension **PlatformIO IDE**.
+- Framework biên dịch: `framework = arduino` với `platform = espressif32`.
+- Trình thông dịch Python: Python 3.9+ (phục vụ chạy script MQTT kiểm thử cho Lab 1).
 
-### 4.2. File cau hinh `platformio.ini` tieu chuan
-Moi du an trong cac lab su dung file cau hinh mau sau:
+### 4.2. File cấu hình `platformio.ini` tiêu chuẩn
+Mọi dự án trong các lab sử dụng file cấu hình mẫu sau:
 
 ```ini
 [env:yolo_uno]
@@ -97,57 +97,57 @@ lib_deps =
 
 ---
 
-## 5. Huong dan su dung Repository
+## 5. Hướng dẫn sử dụng Repository
 
-### 5.1. Clone ma nguon
+### 5.1. Clone mã nguồn
 ```bash
 git clone https://github.com/vophamk23/INTERNET-OF-THINGS.git
 cd INTERNET-OF-THINGS
 ```
 
-### 5.2. Chuyen doi giua cac nhanh
-De lam viec voi tung bai thuc hanh cu the, su dung lenh checkout cua Git:
+### 5.2. Chuyển đổi giữa các nhánh
+Để làm việc với từng bài thực hành cụ thể, sử dụng lệnh checkout của Git:
 
 ```bash
-# Xem danh sach toan bo cac nhanh
+# Xem danh sách toàn bộ các nhánh
 git branch -a
 
-# Chuyen sang Lab 1: Nen tang Cloud CoreIOT & MQTT
-git checkout lab1_coreiot
+# Chuyển sang Lab 1: Nền tảng Cloud CoreIOT & MQTT
+git checkout lab1_coreiot    # hoặc: git checkout lab1
 
-# Chuyen sang Lab 2: Lap trinh nhung GPIO & NeoPixel
-git checkout lab2_gpio_neopixel
+# Chuyển sang Lab 2: Lập trình nhúng GPIO & NeoPixel
+git checkout lab2_gpio_neopixel    # hoặc: git checkout lab2
 
-# Chuyen sang Lab 3: Cam bien I2C DHT20 & LCD 1602
-git checkout lab3_dht20_lcd
+# Chuyển sang Lab 3: Cảm biến I2C DHT20 & LCD 1602
+git checkout lab3_dht20_lcd    # hoặc: git checkout lab3
 
-# Chuyen sang Lab 4: Embedded Web Server & RESTful API
-git checkout lab4_webserver
+# Chuyển sang Lab 4: Embedded Web Server & RESTful API
+git checkout lab4_webserver    # hoặc: git checkout lab4
 
-# Chuyen sang Assignment: Do an he thong IoT cuoi ky
+# Chuyển sang Assignment: Đồ án hệ thống IoT cuối kỳ
 git checkout assignment
 ```
 
-### 5.3. Quy trinh bien dich va nap chuong trinh voi PlatformIO
-Tu thu muc goc cua tung du an:
+### 5.3. Quy trình biên dịch và nạp chương trình với PlatformIO
+Từ thư mục gốc của từng dự án:
 
 ```bash
-# Bien dich ma nguon
+# Biên dịch mã nguồn
 pio run
 
-# Nap firmware vao bo mach Yolo:UNO
+# Nạp firmware vào bo mạch Yolo:UNO
 pio run --target upload
 
-# Mo cua so Serial Monitor de theo doi nhat ky he thong
+# Mở cửa sổ Serial Monitor để theo dõi nhật ký hệ thống
 pio device monitor
 ```
 
 ---
 
-## 6. Danh muc tai lieu tham khao
+## 6. Danh mục tài liệu tham khảo
 
 1. ESP32-S3 Technical Reference Manual: Espressif Systems.
 2. PlatformIO Documentation: https://docs.platformio.org/
 3. CoreIOT / ThingsBoard IoT Platform Documentation: https://thingsboard.io/docs/
 4. FreeRTOS Real-time Kernel Documentation: https://www.freertos.org/
-5. Giao trinh Thuc hanh Internet van vat - Khoa KH&KT May tinh, DH Bach Khoa TP.HCM.
+5. Giáo trình Thực hành Internet vạn vật - Khoa KH&KT Máy tính, ĐH Bách Khoa TP.HCM.
