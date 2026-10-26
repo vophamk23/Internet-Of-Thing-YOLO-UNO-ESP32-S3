@@ -1,153 +1,113 @@
-# INTERNET OF THINGS (IoT) - YOLO:UNO ESP32-S3 APPLICATIONS
+# LAB 3: I2C SENSOR INTERFACING AND DISPLAY ON ESP32 (DHT20 & LCD 1602)
 
 Khoa Khoa hoc va Ky thuat May tinh - Truong Dai hoc Bach Khoa, DHQG-HCM  
 Mon hoc: Internet van vat (CO3061 / CO3062)  
-Nen tang phan cung: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
-Moi truong phat trien: PlatformIO IDE (Arduino Core for ESP32 / FreeRTOS)  
+Nhanh Git: `lab3_dht20_lcd`  
+Nen tang: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
+Moi truong: PlatformIO IDE (Framework Arduino for ESP32 & FreeRTOS)  
 
 ---
 
-## 1. Tong quan du an
+## 1. Muc tieu thi nghiem
 
-Repository nay chua toan bo tai lieu thiet ke, ma nguon mau va kien truc thuc hanh cho khoa hoc Internet van vat (IoT). Khoa hoc huong toi viec xay dung he thong IoT toan dien tu thiet bi bien (Edge Devices) den ha tang dien toan dam may (Cloud IoT Platforms), bao gom:
-- Giao thuc truyen thong mang cong nghiep nhe MQTT (Message Queuing Telemetry Transport) va nen tang quan ly CoreIOT / ThingsBoard.
-- Lap trinh nhung dieu khien ngoai vi GPIO, den thong minh NeoPixel RGB (WS2812B) va da nhiem thoi gian thuc FreeRTOS.
-- Giao tiep truyen thong noi tiep I2C voi cam bien moi truong DHT20 va man hinh hien thi LCD 1602.
-- Xay dung may chu nhung bat dong bo (Embedded Asynchronous Web Server) phuc vu RESTful API JSON, giam sat Dashboard va cap nhat firmware tu xa qua mang (OTA Update).
-- Thiet ke va tich hop he thong IoT thuc te trong Do an cuoi ky (Capstone Assignment).
+1. Nam vung nguyen ly truyen thong noi tiep dong bo I2C (Inter-Integrated Circuit):
+   - Co che 2 day: Day du lieu noi tiep (SDA) va Day xung nhip (SCL) voi dien tro keo len (Pull-up resistors).
+   - Dinh dia chi thiet bi 7-bit tren bus: Cam bien DHT20 (`0x38`), Man hinh LCD 1602 I2C qua chip PCF8574 (`0x27` hoac `0x3F`).
+   - Khung truyen I2C: Tin hieu START, dia chi thiet bi kem bit R/W, bit xac nhan ACK/NACK, cac byte du lieu va tin hieu STOP.
+2. Thu thap thong so moi truong thoi gian thuc tu cam bien ky thuat so DHT20:
+   - Do nhiet do chinh xac (°C) va do am tuong doi (RH%).
+   - Tinh toan ma kiem tra loi (Checksum verification) de loai bo cac gia tri doc loi/nhieu.
+3. Hien thi truc quan va canh bao da tang:
+   - Chi thi dai nhiet do bang mau sac tren den NeoPixel RGB.
+   - Dieu bien tan so chop tat cua LED don theo muc do am moi truong.
+   - Hien thi thong so thoi gian thuc len man hinh ky tu LCD 1602.
+4. Xay dung may trang thai huu han (FSM) xu ly su co bao an he thong (Fail-Safe Mechanism) khi mat ket noi cam bien dot ngot.
 
 ---
 
-## 2. Cau truc phan nhanh (Git Branching Strategy)
+## 2. Phan bo chan phan cung va Dia chi I2C (Hardware Configuration)
 
-Ma nguon cua du an duoc phan bo khoa hoc thanh 6 nhanh tuong ung voi cac giai doan thuc hanh va nghien cuu:
+### 2.1. Bang dau noi ngoai vi tren Yolo:UNO
+Board Yolo:UNO dinh nghia cac chan I2C mac dinh cho ESP32-S3:
 
-| Ten nhanh | Noi dung chuyen biet | Trinh do / Muc tieu |
+| Ngoai vi / Tin hieu | Chan GPIO ESP32-S3 | Chuc nang ky thuat |
 | :--- | :--- | :--- |
-| `main` | Nhanh goc chua tai lieu tong quan, kien truc toan khoa va dac ta phan cung Yolo:UNO. | Tham chieu chung toan khoa |
-| `lab1_coreiot` | Nen tang IoT Cloud & Giao thuc MQTT (CoreIOT, Telemetry, RPC hai chieu, Dashboard). | Dien toan dam may & MQTT |
-| `lab2_gpio_neopixel` | Lap trinh nhung IoT & Da nhiem FreeRTOS tren ESP32 (GPIO LED, WS2812B, Non-blocking timing). | Lap trinh phan cung & RTOS |
-| `lab3_dht20_lcd` | Giao tiep cam bien I2C & Hien thi (Cam bien nhiet am DHT20, LCD 1602, Bao an Fail-Safe). | Giao thuc I2C & Cam bien |
-| `lab4_webserver` | Embedded Web Server & RESTful API (ESPAsyncWebServer, Moving Average, Hysteresis, OTA). | Web Server & Mang khong day |
-| `assignment` | Do an He thong IoT hoan chinh (Smart Farm / Smart Home / Giam sat moi truong). | Do an tong hop (Capstone) |
+| I2C Serial Data (SDA) | `GPIO 11` | Duong truyen du lieu hai chieu I2C |
+| I2C Serial Clock (SCL) | `GPIO 12` | Duong truyen xung nhip dong bo (100 kHz) |
+| Onboard NeoPixel RGB | `GPIO 6` | Chi thi mau sac canh bao nhiet do |
+| Onboard User LED | `GPIO 13` | Chi thi nhip nhap nhay theo do am |
+| Console UART | `USB-C CDC` | Theo doi nhat ky Serial (115200 bps) |
+
+### 2.2. Bang tra cuu dia chi I2C (I2C Address Map)
+- **Cam bien DHT20:** Dia chi co dinh `0x38`.
+- **Man hinh LCD 1602 (I2C Backpack PCF8574):** Dia chi tieu chuan `0x27` (hoac `0x3F` tuy lo san xuat).
 
 ---
 
-## 3. Dac ta phan cung Bo mach Yolo:UNO
+## 3. Danh muc cac bai tap thuc hanh va Mo ta chi tiet
 
-Kit Yolo:UNO la bo mach phat trien IoT tieu chuan duoc trang bi vi dieu khien the he moi ESP32-S3:
+### Bai 1: Doc cam bien DHT20 va NeoPixel chi thi dai gia tri nhiet do
+- **Muc tieu:** Thu thap du lieu nhiet do va chuyen doi thanh tin hieu canh bao thi giac.
+- **Quy chuan phan dai nhiet do va ma mau NeoPixel:**
 
-### 3.1. Thong so ky thuat vi dieu khien ESP32-S3
-- Loi xu ly: Dual-core 32-bit Xtensa LX7 chay o tan so len den 240 MHz.
-- Tap lenh ho tro: Vector Instructions phuc vu tang toc tinh toan AI/DSP.
-- Bo nho:
-  - ROM: 384 KB (Bootloader va loi he thong).
-  - SRAM: 512 KB (Bo nho noi).
-  - External SPI Flash: 8 MB.
-  - External PSRAM: 8 MB (Octal SPI).
-- Ket noi khong day:
-  - Wi-Fi: 802.11 b/g/n (2.4 GHz) ho tro che do Station va SoftAP.
-  - Bluetooth: Bluetooth 5.0 Low Energy (BLE) va Bluetooth Mesh.
+| Dai nhiet do do duoc | Trang thai moi truong | Mau sac NeoPixel | Ma mau RGB |
+| :--- | :--- | :--- | :--- |
+| Nhiet do < 25.0°C | Mat me (Cool) | XANH DUONG (Blue) | `(0, 0, 255)` |
+| 25.0°C <= Nhiet do <= 32.0°C | Ly tuong (Comfort) | XANH LA (Green) | `(0, 255, 0)` |
+| Nhiet do > 32.0°C | Nong / Canh bao (Hot) | DO (Red) | `(255, 0, 0)` |
 
-### 3.2. Bang anh xa chan ngoai vi tren Yolo:UNO (Pinout Mapping)
+- **Yeu cau ky thuat:** Chu ky lay mau cam bien la 1000 ms. Du lieu duoc in dinh ky ra Serial Monitor de doi chieu voi mau den thuc te tren bo mach.
 
-| Ngoai vi / Tin hieu | Chan GPIO ESP32-S3 | Chuc nang & Dinh dang logic |
-| :--- | :--- | :--- |
-| Onboard User LED | `GPIO 13` | Digital Output, Active-High |
-| Onboard NeoPixel RGB | `GPIO 6` | Single-wire 800 kHz protocol (WS2812B) |
-| I2C Serial Data (SDA) | `GPIO 11` | Giao tiep I2C (DHT20, LCD 1602, RTC) |
-| I2C Serial Clock (SCL) | `GPIO 12` | Xung nhip I2C (100 kHz standard / 400 kHz fast) |
-| Cong Console Debug | USB-C (Native CDC / UART0) | Giam sat Serial Monitor (Baudrate: 115200) |
+### Bai 2: Dieu bien tan so nhap nhay LED theo do am moi truong
+- **Muc tieu:** Chuyen doi gia tri do am thanh tan so nhap nhay cua User LED13.
+- **Quy chuan chu ky va tan so nhap nhay:**
 
----
+| Dai do am moi truong (RH) | Trang thai do am | Chu ky nhap nhay LED13 | Thoi gian Sang / Tat |
+| :--- | :--- | :--- | :--- |
+| Do am < 50.0% | Kho han (Dry) | **2000 ms (Cham)** | Sang 1000 ms / Tat 1000 ms |
+| 50.0% <= Do am <= 75.0% | Ly tuong (Normal) | **1000 ms (Vua)** | Sang 500 ms / Tat 500 ms |
+| Do am > 75.0% | Am uot (Humid) | **400 ms (Nhanh)** | Sang 200 ms / Tat 200 ms |
 
-## 4. Yeu cau moi truong va Cai dat
+- **Kiem chung:** Khi tho hoi am vao cam bien, do am vuot 75%, LED lap tuc tang toc do chop tat ro ret ma khong lam dung chu trinh kiem tra nhiet do cua NeoPixel o Bai 1.
 
-### 4.1. Cong cu phat trien (IDE & Toolchain)
-- Trinh soan thao ma nguon: Visual Studio Code.
-- Moi truong phat trien nhung: Extension **PlatformIO IDE**.
-- Framework bien dich: `framework = arduino` voi `platform = espressif32`.
-- Trinh thong dich Python: Python 3.9+ (phuc vu chay script MQTT test cho Lab 1).
+### Bai 3: Xu ly su co ngat ket noi cam bien va co che bao an (Fail-Safe FSM)
+- **Muc tieu:** Xay dung tinh nang tin cay cong nghiep, tu dong phat hien va xu ly khi cam bien bi hong hoac dut cap I2C.
+- **Thiet ke May trang thai huu han (FSM):**
+  - **Trang thai NORMAL (Binh thuong):** Cam bien tra ve ma loi `DHT20_OK` (0). He thong hoat dong nhu Bai 1 va Bai 2.
+  - **Trang thai FAIL_SAFE (Su co):** Khi lenh doc cam bien tra ve ma loi (khong tim thay thiet bi hoac loi truyen tin):
+    - Den NeoPixel lap tuc chuyen sang che do **chop tat lien tuc mau VANG / DO** canh bao nguy hiem.
+    - User LED13 nhap nhay tan so cuc nhanh (100 ms) bao hieu loi phan cung.
+    - In thong diep canh bao khan cap `[ERROR] DHT20 Disconnected! Entering Fail-Safe mode` ra cong Serial.
+    - Khi cam bien duoc cam tro lai, FSM tu dong xac nhan va tro ve trang thai NORMAL ma khong can khoi dong lai MCU.
 
-### 4.2. File cau hinh `platformio.ini` tieu chuan
-Moi du an trong cac lab su dung file cau hinh mau sau:
-
-```ini
-[env:yolo_uno]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
-monitor_speed = 115200
-upload_speed = 921600
-
-build_flags = 
-    -DARDUINO_USB_MODE=1
-    -DARDUINO_USB_CDC_ON_BOOT=1
-
-lib_deps = 
-    adafruit/Adafruit NeoPixel @ ^1.12.0
-    robtillaart/DHT20 @ ^0.3.1
-    marcoschwartz/LiquidCrystal_I2C @ ^1.1.4
-    bblanchon/ArduinoJson @ ^6.21.4
-    me-no-dev/ESPAsyncWebServer @ ^3.6.0
-    me-no-dev/AsyncTCP @ ^3.3.2
-    knolleary/PubSubClient @ ^2.8
-    ayushsharma82/ElegantOTA @ ^3.1.6
-```
+### Bai 4 & 5: Hien thi thong so len Man hinh LCD 1602 I2C
+- **Muc tieu:** Tich hop man hinh LCD 1602 de tao giao dien nguoi - may (HMI) doc lap tai hien truong.
+- **Dinh dang hien thi:**
+  - Dong 1: `Temp: xx.x C [STATUS]`
+  - Dong 2: `Humi: yy.y % [STATUS]`
+  - Khi o che do Fail-Safe: Dong 2 hien thi thong bao `SENSOR ERROR!` de nhan vien van hanh biet ro tinh trang.
 
 ---
 
-## 5. Huong dan su dung Repository
+## 4. Huong dan Bien dich va Nap chuong trinh
 
-### 5.1. Clone ma nguon
-```bash
-git clone https://github.com/vophamk23/INTERNET-OF-THINGS.git
-cd INTERNET-OF-THINGS
-```
-
-### 5.2. Chuyen doi giua cac nhanh
-De lam viec voi tung bai thuc hanh cu the, su dung lenh checkout cua Git:
+Tu thu muc goc cua nhanh tren PlatformIO:
 
 ```bash
-# Xem danh sach toan bo cac nhanh
-git branch -a
-
-# Chuyen sang Lab 1: Nen tang Cloud CoreIOT & MQTT
-git checkout lab1_coreiot
-
-# Chuyen sang Lab 2: Lap trinh nhung GPIO & NeoPixel
-git checkout lab2_gpio_neopixel
-
-# Chuyen sang Lab 3: Cam bien I2C DHT20 & LCD 1602
-git checkout lab3_dht20_lcd
-
-# Chuyen sang Lab 4: Embedded Web Server & RESTful API
-git checkout lab4_webserver
-
-# Chuyen sang Assignment: Do an he thong IoT cuoi ky
-git checkout assignment
-```
-
-### 5.3. Quy trinh bien dich va nap chuong trinh voi PlatformIO
-Tu thu muc goc cua tung du an:
-
-```bash
-# Bien dich ma nguon
+# Bien dich chuong trinh
 pio run
 
-# Nap firmware vao bo mach Yolo:UNO
+# Nap vao kit Yolo:UNO
 pio run --target upload
 
-# Mo cua so Serial Monitor de theo doi nhat ky he thong
-pio device monitor
+# Giam sat Serial Monitor
+pio device monitor -b 115200
 ```
 
 ---
 
-## 6. Danh muc tai lieu tham khao
+## 5. Quy tac ky thuat va Luu y ve Bus I2C
 
-1. ESP32-S3 Technical Reference Manual: Espressif Systems.
-2. PlatformIO Documentation: https://docs.platformio.org/
-3. CoreIOT / ThingsBoard IoT Platform Documentation: https://thingsboard.io/docs/
-4. FreeRTOS Real-time Kernel Documentation: https://www.freertos.org/
-5. Giao trinh Thuc hanh Internet van vat - Khoa KH&KT May tinh, DH Bach Khoa TP.HCM.
+1. **Tro keo len (Pull-up Resistors):** Day SDA va SCL bat buoc phai co dien tro keo len nguon 3.3V (thuong tu 4.7kΩ den 10kΩ). Tren kit Yolo:UNO va module DHT20 da tich hop san tro keo.
+2. **Kiem tra ket noi bang I2C Scanner:** Neu khong doc duoc du lieu, can nap chuong trinh I2C Scanner de xac nhan dung dia chi `0x38` cua DHT20 va `0x27` cua LCD tren bus truoc khi nap chuong trinh chinh.
+3. **Thoi gian khoi dong DHT20:** Sau khi cap nguon, cam bien DHT20 can toi thieu 100 ms de on dinh truoc khi thuc hien lenh khoi tao `Wire.begin()` va `dht20.begin()`.
