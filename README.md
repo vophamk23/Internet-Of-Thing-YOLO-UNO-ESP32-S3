@@ -1,153 +1,121 @@
-# INTERNET OF THINGS (IoT) - YOLO:UNO ESP32-S3 APPLICATIONS
+# LAB 1: IOT CLOUD PLATFORM AND MQTT PROTOCOL WITH COREIOT
 
 Khoa Khoa hoc va Ky thuat May tinh - Truong Dai hoc Bach Khoa, DHQG-HCM  
 Mon hoc: Internet van vat (CO3061 / CO3062)  
-Nen tang phan cung: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
-Moi truong phat trien: PlatformIO IDE (Arduino Core for ESP32 / FreeRTOS)  
+Nhanh Git: `lab1_coreiot`  
+Nen tang: CoreIOT Cloud Platform (ThingsBoard based)  
+Giao thuc truyen thong: MQTT (Message Queuing Telemetry Transport)  
 
 ---
 
-## 1. Tong quan du an
+## 1. Muc tieu thi nghiem
 
-Repository nay chua toan bo tai lieu thiet ke, ma nguon mau va kien truc thuc hanh cho khoa hoc Internet van vat (IoT). Khoa hoc huong toi viec xay dung he thong IoT toan dien tu thiet bi bien (Edge Devices) den ha tang dien toan dam may (Cloud IoT Platforms), bao gom:
-- Giao thuc truyen thong mang cong nghiep nhe MQTT (Message Queuing Telemetry Transport) va nen tang quan ly CoreIOT / ThingsBoard.
-- Lap trinh nhung dieu khien ngoai vi GPIO, den thong minh NeoPixel RGB (WS2812B) va da nhiem thoi gian thuc FreeRTOS.
-- Giao tiep truyen thong noi tiep I2C voi cam bien moi truong DHT20 va man hinh hien thi LCD 1602.
-- Xay dung may chu nhung bat dong bo (Embedded Asynchronous Web Server) phuc vu RESTful API JSON, giam sat Dashboard va cap nhat firmware tu xa qua mang (OTA Update).
-- Thiet ke va tich hop he thong IoT thuc te trong Do an cuoi ky (Capstone Assignment).
+1. Nam vung kien truc 3 tang tieu chuan cua he thong Internet van vat:
+   - **Tang Thu nhan (Perception Layer):** Thiet bi bien thu thap tin hieu tu cam bien nhiet do, do am va anh sang.
+   - **Tang Mang (Network Layer):** Giao thuc mang MQTT chay tren nen tang TCP/IP, mo hinh Publish - Subscribe nhe va tiet kiem bang thong.
+   - **Tang Ung dung (Application Layer):** May chu dam may CoreIOT tiep nhan, luu tru chuoi thoi gian (Time-series data) va truc quan hoa du lieu tren Dashboard.
+2. Thuc hanh xac thuc thiet bi bang Access Token bao mat.
+3. Nam vung chu ky va dinh dang goi tin Telemetry (JSON Payload).
+4. Thiet lap co che goi thu tuc tu xa hai chieu (Bidirectional Remote Procedure Call - RPC) de dieu khien co cau chap hanh tu Dashboard.
+5. Quan ly phan quyen nguoi dung (Customer Assignment) va chia se giao dien Dashboard cong khai (Public URL).
 
 ---
 
-## 2. Cau truc phan nhanh (Git Branching Strategy)
+## 2. Thong so may chu va Giao thuc MQTT
 
-Ma nguon cua du an duoc phan bo khoa hoc thanh 6 nhanh tuong ung voi cac giai doan thuc hanh va nghien cuu:
+He thong ket noi truc tiep toi may chu Cloud Broker tieu chuan cua khoa hoc:
 
-| Ten nhanh | Noi dung chuyen biet | Trinh do / Muc tieu |
+| Thong so | Gia tri cau hinh | Giai thich ky thuat |
 | :--- | :--- | :--- |
-| `main` | Nhanh goc chua tai lieu tong quan, kien truc toan khoa va dac ta phan cung Yolo:UNO. | Tham chieu chung toan khoa |
-| `lab1_coreiot` | Nen tang IoT Cloud & Giao thuc MQTT (CoreIOT, Telemetry, RPC hai chieu, Dashboard). | Dien toan dam may & MQTT |
-| `lab2_gpio_neopixel` | Lap trinh nhung IoT & Da nhiem FreeRTOS tren ESP32 (GPIO LED, WS2812B, Non-blocking timing). | Lap trinh phan cung & RTOS |
-| `lab3_dht20_lcd` | Giao tiep cam bien I2C & Hien thi (Cam bien nhiet am DHT20, LCD 1602, Bao an Fail-Safe). | Giao thuc I2C & Cam bien |
-| `lab4_webserver` | Embedded Web Server & RESTful API (ESPAsyncWebServer, Moving Average, Hysteresis, OTA). | Web Server & Mang khong day |
-| `assignment` | Do an He thong IoT hoan chinh (Smart Farm / Smart Home / Giam sat moi truong). | Do an tong hop (Capstone) |
+| MQTT Broker Host | `app.coreiot.io` | Dia chi may chu may chu Cloud CoreIOT |
+| Cong TCP tieu chuan | `1883` | Cong truyen thong MQTT Plaintext |
+| Thong tin xac thuc | Device Access Token | Token do nguoi dung tao (Toi thieu 12 ky tu) |
+| Topic gui Telemetry | `v1/devices/me/telemetry` | Publish du lieu cam bien len may chu |
+| Topic dang ky nhan RPC | `v1/devices/me/rpc/request/+` | Subscribe de nhan yeu cau dieu khien tu Dashboard |
+| Topic phan hoi ket qua RPC | `v1/devices/me/rpc/response/{id}` | Publish ket qua phan hoi trang thai thiet bi ve Dashboard |
 
 ---
 
-## 3. Dac ta phan cung Bo mach Yolo:UNO
+## 3. Danh muc cac bai tap thuc hanh va Mo ta chi tiet
 
-Kit Yolo:UNO la bo mach phat trien IoT tieu chuan duoc trang bi vi dieu khien the he moi ESP32-S3:
+### Bai 1: Tao thiet bi, thong tin xac thuc va nhom thiet bi (Device Management)
+- **Muc tieu:** Lam quen voi giao dien quan tri cua he thong CoreIOT.
+- **Yeu cau thuc hien:**
+  - Dang nhap he thong, tao mot Device Profile phu hop voi yeu cau quan ly.
+  - Khoi tao mot thiet bi moi voi dinh dang Access Token chua ma so sinh vien (Vi du: `Vo_Lab1_Token_2313946`).
+  - Tao Nhom thiet bi (Device Group) va phan quyen thiet bi vao nhom tuong ung.
+- **Kiem chung:** Trang thai thiet bi tren giao dien CoreIOT chuyen sang Active khi co ket noi dau tien.
 
-### 3.1. Thong so ky thuat vi dieu khien ESP32-S3
-- Loi xu ly: Dual-core 32-bit Xtensa LX7 chay o tan so len den 240 MHz.
-- Tap lenh ho tro: Vector Instructions phuc vu tang toc tinh toan AI/DSP.
-- Bo nho:
-  - ROM: 384 KB (Bootloader va loi he thong).
-  - SRAM: 512 KB (Bo nho noi).
-  - External SPI Flash: 8 MB.
-  - External PSRAM: 8 MB (Octal SPI).
-- Ket noi khong day:
-  - Wi-Fi: 802.11 b/g/n (2.4 GHz) ho tro che do Station va SoftAP.
-  - Bluetooth: Bluetooth 5.0 Low Energy (BLE) va Bluetooth Mesh.
+### Bai 2: Gui Telemetry tu Python kem cam bien anh sang gia lap (Telemetry Streaming)
+- **Muc tieu:** Xay dung thiet bi bien gia lap gui du lieu dinh ky len Cloud qua MQTT.
+- **Yeu cau thuc hien:**
+  - Su dung thu vien `paho-mqtt` tren Python de thiet lap ket noi toi `app.coreiot.io:1883`.
+  - Thu thap hoac gia lap 3 thong so moi truong: Nhiet do (°C), Do am (%), Cuong do anh sang (Lux).
+  - Chu ky truyen gui du lieu (Publish Rate) bat buoc la **3 giay/lan**.
+  - Dinh dang goi tin JSON Payload:
+    ```json
+    {
+      "temperature": 28.5,
+      "humidity": 65.2,
+      "light": 420
+    }
+    ```
+- **Kiem chung:** Tab **Latest Telemetry** tren thiet bi tai CoreIOT cap nhat cac gia tri do moi sau moi 3 giay kem theo dau thoi gian (Timestamp) chinh xac.
 
-### 3.2. Bang anh xa chan ngoai vi tren Yolo:UNO (Pinout Mapping)
+### Bai 3: Xay dung Dashboard giam sat truc quan (Visualization Dashboard)
+- **Muc tieu:** Thiet ke giao dien giam sat truc quan theo tieu chuan cong nghiep.
+- **Yeu cau thuc hien:**
+  - Tao mot Dashboard moi gan voi Alias cua thiet bi da khoi tao o Bai 1.
+  - Cau hinh cac Widget truc quan hoa:
+    - **Digital Gauge Widget:** Hien thi gia tri tuc thoi cua Nhiet do va Do am voi cac dai mau canh bao truc quan (Xanh: Ly tuong, Do: Nguy hiem).
+    - **Card Status Widget:** Hien thi cuong do anh sang tuc thoi.
+    - **Time-series Line Chart:** Bieu do duong the hien su bien thien cua cac thong so theo thoi gian thuc, cho phep phong to/thu nho va chon khoang thoi gian khao sat.
+- **Kiem chung:** Dashboard tu dong cap nhat dong moi khi thiet bi bien gui goi tin Telemetry len.
 
-| Ngoai vi / Tin hieu | Chan GPIO ESP32-S3 | Chuc nang & Dinh dang logic |
-| :--- | :--- | :--- |
-| Onboard User LED | `GPIO 13` | Digital Output, Active-High |
-| Onboard NeoPixel RGB | `GPIO 6` | Single-wire 800 kHz protocol (WS2812B) |
-| I2C Serial Data (SDA) | `GPIO 11` | Giao tiep I2C (DHT20, LCD 1602, RTC) |
-| I2C Serial Clock (SCL) | `GPIO 12` | Xung nhip I2C (100 kHz standard / 400 kHz fast) |
-| Cong Console Debug | USB-C (Native CDC / UART0) | Giam sat Serial Monitor (Baudrate: 115200) |
+### Bai 4: Dieu khien thiet bi tu xa bang co che RPC (Two-Way RPC Control)
+- **Muc tieu:** Hien thuc co che dieu khien hai chieu thoi gian thuc tu Web Dashboard ve thiet bi chap hanh.
+- **Yeu cau thuc hien:**
+  - Bo sung cac Widget nut gat (Control Switch) tren Dashboard de dieu khien 3 thiet bi ngoai vi: `LED`, `PUMP` (May bom), `FAN` (Quat gio).
+  - Thiet bi bien subscribe vao topic `v1/devices/me/rpc/request/+`.
+  - Khi nguoi dung thao tac tren Dashboard, may chu Cloud gui yeu cau RPC co cau truc:
+    ```json
+    {
+      "method": "setDeviceState",
+      "params": { "device": "PUMP", "status": true }
+    }
+    ```
+  - Thiet bi trich xuat `request_id`, cap nhat trang thai phan cung va bat buoc phai publish goi phan hoi ve topic `v1/devices/me/rpc/response/{request_id}`:
+    ```json
+    { "success": true, "device": "PUMP", "status": true }
+    ```
+- **Kiem chung:** Nut gat tren Dashboard khong bi nhay nguoc ve vi tri cu (nho nhan duoc phan hoi hop le), thiet bi chap hanh chuyen trang thai tuc thi.
+
+### Bai 5: Chia se Dashboard cong khai va quan ly phan quyen (Public Dashboard Access)
+- **Muc tieu:** Xuat ban giao dien Dashboard de giam sat tu xa ma khong can dang nhap tai khoan quan tri.
+- **Yeu cau thuc hien:**
+  - Bat tinh nang **Make Dashboard Public** trong phan quan tri CoreIOT.
+  - Sao chep duong dan lien ket cong khai (Public URL kem token truy cap).
+  - Thu nghiem mo tren trinh duyet an danh (Incognito Mode) de dam bao bat ky nguoi dung nao co lien ket deu co the xem duoc so lieu thoi gian thuc.
+- **Kiem chung:** Dashboard hien thi day du cac widget do dac ma khong yeu cau nhap Mat khau hay Token quan tri.
 
 ---
 
-## 4. Yeu cau moi truong va Cai dat
+## 4. Huong dan chay Ma nguon Kiem thu (Python Client)
 
-### 4.1. Cong cu phat trien (IDE & Toolchain)
-- Trinh soan thao ma nguon: Visual Studio Code.
-- Moi truong phat trien nhung: Extension **PlatformIO IDE**.
-- Framework bien dich: `framework = arduino` voi `platform = espressif32`.
-- Trinh thong dich Python: Python 3.9+ (phuc vu chay script MQTT test cho Lab 1).
-
-### 4.2. File cau hinh `platformio.ini` tieu chuan
-Moi du an trong cac lab su dung file cau hinh mau sau:
-
-```ini
-[env:yolo_uno]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
-monitor_speed = 115200
-upload_speed = 921600
-
-build_flags = 
-    -DARDUINO_USB_MODE=1
-    -DARDUINO_USB_CDC_ON_BOOT=1
-
-lib_deps = 
-    adafruit/Adafruit NeoPixel @ ^1.12.0
-    robtillaart/DHT20 @ ^0.3.1
-    marcoschwartz/LiquidCrystal_I2C @ ^1.1.4
-    bblanchon/ArduinoJson @ ^6.21.4
-    me-no-dev/ESPAsyncWebServer @ ^3.6.0
-    me-no-dev/AsyncTCP @ ^3.3.2
-    knolleary/PubSubClient @ ^2.8
-    ayushsharma82/ElegantOTA @ ^3.1.6
-```
-
----
-
-## 5. Huong dan su dung Repository
-
-### 5.1. Clone ma nguon
-```bash
-git clone https://github.com/vophamk23/INTERNET-OF-THINGS.git
-cd INTERNET-OF-THINGS
-```
-
-### 5.2. Chuyen doi giua cac nhanh
-De lam viec voi tung bai thuc hanh cu the, su dung lenh checkout cua Git:
+Tu thu muc goc cua nhanh, thuc hien cai dat thu vien va khoi chay thiet bi:
 
 ```bash
-# Xem danh sach toan bo cac nhanh
-git branch -a
+# Cai dat thu vien paho-mqtt
+pip install paho-mqtt
 
-# Chuyen sang Lab 1: Nen tang Cloud CoreIOT & MQTT
-git checkout lab1_coreiot
-
-# Chuyen sang Lab 2: Lap trinh nhung GPIO & NeoPixel
-git checkout lab2_gpio_neopixel
-
-# Chuyen sang Lab 3: Cam bien I2C DHT20 & LCD 1602
-git checkout lab3_dht20_lcd
-
-# Chuyen sang Lab 4: Embedded Web Server & RESTful API
-git checkout lab4_webserver
-
-# Chuyen sang Assignment: Do an he thong IoT cuoi ky
-git checkout assignment
-```
-
-### 5.3. Quy trinh bien dich va nap chuong trinh voi PlatformIO
-Tu thu muc goc cua tung du an:
-
-```bash
-# Bien dich ma nguon
-pio run
-
-# Nap firmware vao bo mach Yolo:UNO
-pio run --target upload
-
-# Mo cua so Serial Monitor de theo doi nhat ky he thong
-pio device monitor
+# Chay thiet bi gia lap IoT
+python lab1_device.py
 ```
 
 ---
 
-## 6. Danh muc tai lieu tham khao
+## 5. Quy tac ky thuat va Luu y quan trong
 
-1. ESP32-S3 Technical Reference Manual: Espressif Systems.
-2. PlatformIO Documentation: https://docs.platformio.org/
-3. CoreIOT / ThingsBoard IoT Platform Documentation: https://thingsboard.io/docs/
-4. FreeRTOS Real-time Kernel Documentation: https://www.freertos.org/
-5. Giao trinh Thuc hanh Internet van vat - Khoa KH&KT May tinh, DH Bach Khoa TP.HCM.
+1. **Access Token bao mat:** Khong de lo Token thiet bi ra ngoai. Token phai dai toi thieu 12 ky tu de tranh bi brute-force.
+2. **QoS (Quality of Service):** Truyen Telemetry nen su dung `QoS = 0` (hoac `QoS = 1`) de dam bao toc do toi uu.
+3. **RPC Timeout:** Neu thiet bi khong gui phan hoi ve `v1/devices/me/rpc/response/{id}` trong vong 5000 ms, Dashboard se bao loi Timeout va giao dien nut gat se bi tra nguoc lai ve trang thai cu.
