@@ -1,58 +1,112 @@
-# LAB 4: XÂY DỰNG EMBEDDED WEB SERVER VÀ KIẾN TRÚC RESTFUL API TRÊN ESP32
+# 🌐 LAB 4: XÂY DỰNG EMBEDDED WEB SERVER VÀ KIẾN TRÚC RESTFUL API TRÊN ESP32
+### Bất đồng bộ AsyncTCP, Lọc trung bình trượt, Thuật toán trễ Hysteresis & Cập nhật OTA
 
-Khoa Khoa học và Kỹ thuật Máy tính - Trường Đại học Bách Khoa, ĐHQG-HCM  
-Môn học: Internet vạn vật (CO3061 / CO3062)  
-Nhánh Git: `lab4_webserver` (hoặc `lab4`)  
-Nền tảng: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
-Môi trường: PlatformIO IDE (Framework Arduino for ESP32 & FreeRTOS)  
-
----
-
-## 1. Mục tiêu thí nghiệm
-
-1. Nắm vững kiến trúc mạng Wi-Fi trên hệ vi điều khiển ESP32-S3:
-   - Chế độ **Wi-Fi Station (STA):** Kết nối trực tiếp vào mạng cục bộ (LAN) hoặc Router gia đình để nhận địa chỉ IP động qua DHCP.
-   - Chế độ **SoftAP (Access Point):** Bo mạch tự phát sóng Wi-Fi để phục vụ cấu hình mạng ban đầu.
-2. Xây dựng máy chủ Web bất đồng bộ (Asynchronous HTTP Web Server với `ESPAsyncWebServer` và `AsyncTCP`):
-   - Xử lý đa luồng kết nối đồng thời mà không làm nghẽn hoặc gián đoạn các tác vụ đọc cảm biến FreeRTOS.
-   - Thiết kế hệ thống API RESTful chuẩn JSON sử dụng thư viện `ArduinoJson`.
-3. Nâng cao độ tin cậy dữ liệu và tối ưu hóa thuật toán nhúng:
-   - **Bộ lọc trung bình trượt (Moving Average Filter 10 mẫu):** Làm mịn dữ liệu, khử nhiễu ngẫu nhiên từ cảm biến nhiệt độ và độ ẩm.
-   - **Thuật toán trễ Hysteresis 1%:** Ngăn ngừa hiện tượng rung dao động chuyển trạng thái (Chattering / Flip-flop) tại các ngưỡng biên độ ẩm.
-   - **Kiến trúc Client-Side Processing:** Phân bổ tính toán giữa ESP32 và trình duyệt người dùng (JavaScript) để giảm tải CPU cho thiết bị nhúng.
-4. Tích hợp tính năng nâng cấp phần mềm qua mạng không dây (Over-The-Air Update - ElegantOTA).
+> **Trường Đại học Bách Khoa - ĐHQG-HCM**  
+> **Khoa Khoa học và Kỹ thuật Máy tính**  
+> **Môn học:** Internet vạn vật (CO3061 / CO3062)  
+> **Sinh viên thực hiện:** Võ Phạm (MSSV: 2313946)  
+> **Nhánh Git:** `lab4_webserver` | **Nền tảng:** Yolo:UNO (ESP32-S3 Dual-Core @ 240MHz) & ESP32 Dev
 
 ---
 
-## 2. Phân bổ kiến trúc đa nhiệm FreeRTOS (Multitasking Architecture)
+## 📖 Mục lục
+- [1. Giới thiệu & Mục tiêu](#1-giới-thiệu--mục-tiêu)
+- [2. Cấu trúc thư mục dự án](#2-cấu-trúc-thư-mục-dự-án)
+- [3. Phân bổ kiến trúc đa nhiệm FreeRTOS (Dual-Core)](#3-phân-bổ-kiến-trúc-đa-nhiệm-freertos-dual-core)
+- [4. Đặc tả RESTful API & Giao thức HTTP](#4-đặc-tả-restful-api--giao-thức-http)
+- [5. Nội dung chi tiết các bài thực hành](#5-nội-dung-chi-tiết-các-bài-thực-hành)
+  - [Bài 0: Khởi tạo hệ thống & Điều khiển LED qua Fetch API](#bài-0-khởi-tạo-hệ-thống--điều-khiển-led-qua-fetch-api)
+  - [Bài 1: Bộ lọc trung bình trượt (Moving Average 10 mẫu)](#bài-1-bộ-lọc-trung-bình-trượt-moving-average-10-mẫu)
+  - [Bài 2: Phân loại dải nhiệt độ Client-Side bằng JavaScript](#bài-2-phân-loại-dải-nhiệt-độ-client-side-bằng-javascript)
+  - [Bài 3: Thuật toán trễ (1% Hysteresis) chống rung trạng thái độ ẩm](#bài-3-thuật-toán-trễ-1-hysteresis-chống-rung-trạng-thái-độ-ẩm)
+  - [Bài 4 & 5: Cập nhật Firmware OTA & Dashboard trực quan](#bài-4--5-cập-nhật-firmware-ota--dashboard-trực-quan)
+- [6. Hướng dẫn biên dịch & Nạp mã nguồn](#6-hướng-dẫn-biên-dịch--nạp-mã-nguồn)
+- [7. Quy tắc kỹ thuật & Lưu ý cốt lõi](#7-quy-tắc-kỹ-thuật--lưu-ý-cốt-lõi)
 
-Hệ thống phân chia tài nguyên thành 2 tác vụ chính hoạt động song song trên 2 nhân vi điều khiển:
+---
 
+## 🎯 1. Giới thiệu & Mục tiêu
+
+Bài thí nghiệm Lab 4 tập trung vào kỹ thuật phát triển **máy chủ nhúng bất đồng bộ (Embedded Asynchronous Web Server)** và thiết kế kiến trúc **RESTful API** tối ưu trên vi điều khiển **ESP32-S3**:
+
+1. **Làm chủ hạ tầng Wi-Fi nhúng:**
+   - Hoạt động ở chế độ **Wi-Fi Station (STA)** kết nối vào mạng LAN nội bộ, nhận địa chỉ IP động qua giao thức DHCP.
+   - Sẵn sàng chuyển đổi chế độ **SoftAP** phục vụ cấu hình trạm đo tại hiện trường.
+2. **Web Server bất đồng bộ phi chặn (Non-blocking):**
+   - Triển khai `ESPAsyncWebServer` kết hợp `AsyncTCP` xử lý đa yêu cầu HTTP đồng thời mà không làm nghẽn chu trình lấy mẫu cảm biến.
+   - Phục vụ toàn bộ giao diện HTML5/CSS/JavaScript lưu trữ trực tiếp trong bộ nhớ Flash (**PROGMEM**).
+3. **Xử lý tín hiệu & Giải thuật lọc số:**
+   - **Bộ lọc trung bình trượt (Moving Average - 10 mẫu):** Triệt tiêu các xung nhiễu đột biến từ cảm biến DHT20.
+   - **Thuật toán trễ (1.0% Hysteresis):** Loại bỏ hiện tượng dao động bật/tắt liên tục (*Chattering / Flip-flop*) tại các vùng biên độ ẩm.
+   - **Mô hình tính toán phân tán (Client-Side Rendering):** Đẩy việc tính toán hiển thị màu sắc về trình duyệt người dùng để giải phóng tài nguyên CPU cho vi điều khiển.
+4. **Bảo trì từ xa qua OTA:** Tích hợp công cụ nâng cấp firmware qua sóng Wi-Fi (*Over-The-Air Update*) bằng `ElegantOTA`.
+
+---
+
+## 📁 2. Cấu trúc thư mục dự án
+
+```text
+YoloUNO_PlatformIO-ESP32_WebServer/
+├── platformio.ini              # Cấu hình biên dịch (esp32_thuong & yolo_uno)
+├── boards/                     # File định nghĩa phần cứng bo mạch Yolo:UNO
+│   └── yolo_uno.json
+├── include/                    # Header files các module chức năng
+│   ├── global.h                # Định nghĩa cấu trúc dữ liệu, Mutex & biến toàn cục
+│   ├── sensor_task.h           # Tác vụ đọc cảm biến DHT20 & bộ lọc số
+│   ├── internet_task.h         # Tác vụ kết nối Wi-Fi & dịch vụ OTA
+│   ├── mainserver.h            # Định nghĩa các Route HTTP REST API
+│   └── web_pages.h             # Mã nguồn giao diện Web Dashboard (PROGMEM)
+├── src/                        # Mã nguồn C++ thực thi
+│   ├── main.cpp                # Khởi tạo tác vụ đa nhiệm FreeRTOS
+│   ├── global.cpp              # Khởi tạo tài nguyên Mutex chia sẻ
+│   ├── sensor_task.cpp         # Hiện thực giải thuật lọc Moving Average & Hysteresis
+│   ├── internet_task.cpp       # Quản trị mạng Wi-Fi và cập nhật ElegantOTA
+│   └── mainserver.cpp          # Bộ định tuyến Web Server & xử lý JSON API
+├── Report_IOT_Lab4/            # Báo cáo thí nghiệm và câu trả lời lý thuyết
+│   ├── main.pdf                # Báo cáo kết quả thí nghiệm định dạng PDF
+│   ├── cau_tra_loi_lab4.txt    # Tổng hợp câu trả lời lý thuyết & trắc nghiệm
+│   ├── main.tex                # Mã nguồn LaTeX bài báo cáo
+│   ├── bkthesis.sty            # Template luận văn ĐHBK
+│   ├── content/                # Nội dung phân tích các bài tập
+│   └── image/                  # Hình ảnh giao diện Web & đồ thị thực nghiệm
+└── README.md                   # Tài liệu hướng dẫn kỹ thuật Lab 4
 ```
+
+---
+
+## 🔄 3. Phân bổ kiến trúc đa nhiệm FreeRTOS (Dual-Core)
+
+Hệ thống phân chia tài nguyên xử lý trên hai nhân vi điều khiển độc lập nhằm đảm bảo tính phản hồi thời gian thực:
+
+```text
 +--------------------------------------------------------------------------+
 |                       ESP32-S3 CORE 0 & CORE 1                           |
 +------------------------------------+-------------------------------------+
 |      TASK 1: sensor_task           |       TASK 2: internet_task         |
-|  - Đọc I2C DHT20 mỗi 1 giây        |  - Duy trì kết nối Wi-Fi            |
+|  - Đọc I2C DHT20 mỗi 1 giây        |  - Duy trì kết nối Wi-Fi Station    |
 |  - Tính Moving Average (10 mẫu)    |  - ESPAsyncWebServer phục vụ HTTP   |
 |  - Tính toán Hysteresis 1%         |  - Phục vụ REST API & Web Dashboard |
-|  - Đồng bộ qua Mutex/Global state  |  - ElegantOTA Firmware Update       |
+|  - Khóa Mutex đồng bộ dữ liệu      |  - ElegantOTA Firmware Update       |
 +------------------------------------+-------------------------------------+
+                                  ▲
+                                  │ (Protected by Mutex)
+                                  ▼
+                     [ Shared System State Data ]
 ```
 
 ---
 
-## 3. Đặc tả các Route HTTP và Giao tiếp Web Server
+## 🔌 4. Đặc tả RESTful API & Giao thức HTTP
 
-| Phương thức | Route URI | Định dạng trả về | Chức năng kỹ thuật |
+| Phương thức | Đường dẫn URI | Kiểu dữ liệu | Chức năng kỹ thuật |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/` | `text/html` | Phục vụ giao diện Web Dashboard HTML5/CSS/JS |
-| `GET` | `/api/sensors` | `application/json` | Trả về số liệu đo cảm biến sau khi qua bộ lọc |
-| `POST` | `/api/led` | `application/json` | Nhận lệnh bật/tắt User LED hoặc đổi màu NeoPixel |
-| `GET` | `/api/status` | `application/json` | Thông tin hệ thống: Wi-Fi RSSI, Heap memory, Uptime |
-| `GET/POST`| `/update` | `text/html` / Binary | Giao diện và cổng nạp firmware OTA qua trình duyệt |
+| **`GET`** | `/` | `text/html` | Tải giao diện Web Dashboard (HTML5/CSS3/JS từ Flash) |
+| **`GET`** | `/api/sensors` | `application/json` | Truy xuất số liệu nhiệt độ, độ ẩm sau khi đã lọc |
+| **`POST`** | `/api/led` | `application/json` | Điều khiển bật/tắt User LED hoặc đổi màu NeoPixel |
+| **`GET`** | `/api/status` | `application/json` | Kiểm tra trạng thái: Wi-Fi RSSI, Bộ nhớ Heap, Uptime |
+| **`GET/POST`** | `/update` | `text/html` / Binary | Giao diện nạp firmware không dây qua OTA |
 
-**Định dạng JSON mẫu tại Route `/api/sensors`:**
+**Cấu trúc dữ liệu JSON phản hồi tại `/api/sensors`:**
 ```json
 {
   "temperature": 29.45,
@@ -65,64 +119,76 @@ Hệ thống phân chia tài nguyên thành 2 tác vụ chính hoạt động so
 
 ---
 
-## 4. Danh mục các bài tập thực hành và Mô tả chi tiết
+## 📊 5. Nội dung chi tiết các bài thực hành
 
-### Bài 0: Các Checkpoint thực hành cơ bản và Điều khiển LED
-- **Mục tiêu:** Khởi tạo hệ thống, kết nối Wi-Fi thành công và phục vụ trang Web tĩnh từ bộ nhớ Flash PROGMEM.
+### 🛠️ Bài 0: Khởi tạo hệ thống & Điều khiển LED qua Fetch API
+- **Mục tiêu:** Thiết lập kết nối Wi-Fi thành công, cấu hình Web Server và phục vụ trang Web từ bộ nhớ `PROGMEM`.
 - **Thực thi:**
-  - Hoàn thiện các điểm kiểm tra D1 đến D6 để đảm bảo stack Web Server hoạt động ổn định.
-  - Xây dựng Route `POST /api/led` để người dùng có thể bật tắt LED trên board thông qua nút nhấn trên giao diện Web mà không bị tải lại trang (sử dụng Fetch API).
-
-### Bài 1: Bộ lọc trung bình trượt (Moving Average 10 mẫu) trên ESP32
-- **Mục tiêu:** Loại bỏ nhiễu đột biến của cảm biến DHT20 bằng bộ đệm vòng (Circular Buffer 10 phần tử).
-- **Thuật toán:**
-  $$\bar{X}_k = \frac{1}{N} \sum_{i=0}^{N-1} X_{k-i} \quad (N = 10)$$
-- **Thực thi:**
-  - Khai báo lớp `SensorMovingAvg` quản lý mảng trượt 10 phần tử.
-  - Khi đủ 10 mẫu đầu tiên, giá trị trung bình trở nên cực kỳ ổn định, loại bỏ hoàn toàn các xung nhiễu đột biến.
-- **Kiểm chứng:** So sánh giá trị thô và giá trị lọc qua Serial Monitor và Dashboard; đường đồ thị trở nên mịn màng và tin cậy.
-
-### Bài 2: Phân loại ngưỡng nhiệt độ động trên trình duyệt (Client-Side)
-- **Mục tiêu:** Áp dụng triết lý tính toán biên (Edge Computing): Chuyển việc định dạng và đổi màu sắc về cho trình duyệt xử lý thay vì bắt vi điều khiển phải sinh mã HTML động.
-- **Thực thi:**
-  - Mã JavaScript trên trình duyệt gọi `fetch('/api/sensors')` định kỳ mỗi 1000 ms.
-  - Dựa trên giá trị nhiệt độ nhận được, JavaScript tự động đổi màu Card giao diện (Xanh: < 25°C, Vàng: 25-32°C, Đỏ: > 32°C).
-
-### Bài 3: Mức độ ẩm tính trên ESP32 với Thuật toán trễ (1% Hysteresis)
-- **Mục tiêu:** Chống hiện tượng chập chờn chuyển trạng thái độ ẩm khi giá trị đo dao động sát vùng biên.
-- **Nguyên lý Hysteresis:**
-  - Giả sử ngưỡng chuyển giữa NORMAL và HUMID là 75%:
-    - Chuyển từ NORMAL lên HUMID chỉ khi: `Độ_ẩm >= 75.0%`.
-    - Chuyển từ HUMID về NORMAL chỉ khi: `Độ_ẩm < (75.0% - 1.0%) = 74.0%`.
-  - Vùng chết 1.0% (Deadband) ngăn chặn việc máy bơm/quạt bật tắt liên tục gây hỏng thiết bị chấp hành.
-- **Kiểm chứng:** Khi phả nhẹ vào cảm biến ở mức 74.8%, trạng thái hệ thống vẫn giữ nguyên tính ổn định của trạng thái trước đó.
-
-### Bài 4 & 5: Tích hợp OTA Firmware Update và Dashboard trực quan
-- **Mục tiêu:** Hoàn thiện hệ thống nhúng với khả năng nâng cấp phần mềm từ xa không cần cắm cáp nạp USB.
-- **Thực thi:**
-  - Tích hợp thư viện `ElegantOTA` vào `internet_task`.
-  - Truy cập vào `http://<ESP32_IP>/update`, kéo thả file `firmware.bin` để nạp chương trình mới qua Wi-Fi trong vòng vài giây.
+  - Hoàn thiện các Checkpoint kiểm tra (D1 đến D6) đảm bảo stack mạng hoạt động tin cậy.
+  - Xây dựng API `POST /api/led`: Người dùng click nút gạt trên Dashboard, trình duyệt dùng `fetch()` gửi lệnh JSON mà không cần tải lại toàn bộ trang Web.
 
 ---
 
-## 5. Hướng dẫn Biên dịch và Nạp chương trình
+### 📈 Bài 1: Bộ lọc trung bình trượt (Moving Average 10 mẫu)
+- **Mục tiêu:** Loại bỏ hoàn toàn các xung nhiễu ngẫu nhiên từ cảm biến bằng bộ đệm vòng (*Circular Buffer*):
+  $$\bar{X}_k = \frac{1}{N} \sum_{i=0}^{N-1} X_{k-i} \quad (N = 10)$$
+- **Thực thi:**
+  - Lớp `SensorMovingAvg` duy trì mảng trượt 10 phần tử cho cả Nhiệt độ và Độ ẩm.
+  - Khi đã thu thập đủ 10 mẫu đầu tiên, đường dữ liệu xuất ra trở nên mịn màng và có độ tin cậy cao.
+- **Kiểm chứng:** So sánh tín hiệu cảm biến thô (*Raw*) và tín hiệu đã lọc (*Filtered*) trên Serial Monitor và Dashboard.
+
+---
+
+### 🎨 Bài 2: Phân loại dải nhiệt độ Client-Side bằng JavaScript
+- **Mục tiêu:** Giảm tải tính toán cho CPU nhúng bằng cách chuyển logic hiển thị sang phía Client (*Edge Computing*).
+- **Thực thi:**
+  - Vi điều khiển chỉ có nhiệm vụ phục vụ dữ liệu thô dạng JSON qua API `/api/sensors`.
+  - Mã JavaScript trên trình duyệt định kỳ thăm dò dữ liệu và tự động đổi màu thẻ thông tin:
+    - 🔵 **Mát mẻ (*Cool*):** `< 25.0 °C` (Màu xanh dương)
+    - 🟡 **Lý tưởng (*Comfort*):** `25.0 °C – 32.0 °C` (Màu vàng/xanh lá)
+    - 🔴 **Nóng (*Hot*):** `> 32.0 °C` (Màu đỏ cảnh báo)
+
+---
+
+### 🛡️ Bài 3: Thuật toán trễ (1% Hysteresis) chống rung trạng thái độ ẩm
+- **Mục tiêu:** Khắc phục triệt để hiện tượng bật/tắt liên tục (*Chattering*) gây hại rơ-le hoặc quạt khi độ ẩm dao động quanh ngưỡng biên.
+- **Nguyên lý Deadband 1.0%:**
+  - Giả định ngưỡng chuyển giữa **NORMAL** và **HUMID** là **75.0%**:
+    - Chuyển từ NORMAL $\rightarrow$ HUMID khi: $\text{Độ ẩm} \ge 75.0\%$.
+    - Chuyển từ HUMID $\rightarrow$ NORMAL chỉ khi: $\text{Độ ẩm} < 74.0\%$ (tức $75.0\% - 1.0\%$).
+- **Kiểm chứng:** Khi giá trị độ ẩm dao động nhẹ tại $74.8\%$, hệ thống giữ nguyên trạng thái trước đó, không bị rung lật trạng thái.
+
+---
+
+### 🚀 Bài 4 & 5: Cập nhật Firmware OTA & Dashboard trực quan
+- **Mục tiêu:** Quản trị thiết bị IoT hiện trường mà không cần dùng cáp nạp USB.
+- **Thực thi:**
+  - Tích hợp thư viện `ElegantOTA` trên luồng `internet_task`.
+  - Mở trình duyệt tại địa chỉ `http://<ESP32_IP>/update`, kéo thả file `firmware.bin` vừa biên dịch để nâng cấp thiết bị trong vòng vài giây.
+
+---
+
+## 💻 6. Hướng dẫn biên dịch & Nạp mã nguồn
+
+Dự án hỗ trợ sẵn cấu hình cho cả kit **Yolo:UNO** (mặc định) và bo mạch **ESP32 Dev thông thường**:
 
 ```bash
-# Biên dịch mã nguồn
-pio run
+# 1. Biên dịch dự án (chọn môi trường yolo_uno hoặc esp32_thuong)
+pio run -e yolo_uno
 
-# Nạp vào kit Yolo:UNO lần đầu qua USB
-pio run --target upload
+# 2. Nạp qua cổng USB-C
+pio run -e yolo_uno --target upload
 
-# Giám sát địa chỉ IP được cấp bởi Router
+# 3. Theo dõi địa chỉ IP được cấp phát
 pio device monitor -b 115200
 
-# Truy cập giao diện bằng trình duyệt tại: http://<IP_DUOC_CAP>
+# 4. Mở trình duyệt Web truy cập vào: http://<DIA_CHI_IP_ESP32>
 ```
 
 ---
 
-## 6. Quy tắc kỹ thuật và Lưu ý cốt lõi
+## ⚙️ 7. Quy tắc kỹ thuật & Lưu ý cốt lõi
 
-1. **Mutex bảo vệ biến toàn cục:** Khi `sensor_task` cập nhật biến độ ẩm/nhiệt độ và `internet_task` đọc các biến này để tạo chuỗi JSON, bắt buộc phải sử dụng `portMUX_TYPE` hoặc `FreeRTOS SemaphoreMutex` để đảm bảo an toàn luồng (Thread-safe).
-2. **Bộ nhớ Heap trên ESP32:** Máy chủ `ESPAsyncWebServer` cấp phát động bộ đệm trong Heap; tránh sử dụng quá nhiều biến `String` kiểu Arduino để tránh phân mảnh bộ nhớ (Memory Fragmentation). Khuyến nghị dùng `char[]` hoặc `snprintf()`.
+1. **Khóa Mutex bảo vệ vùng nhớ dùng chung:** Khi `sensor_task` cập nhật biến trạng thái và `internet_task` đọc dữ liệu để đóng gói JSON, bắt buộc phải dùng `portMUX_TYPE` hoặc `FreeRTOS SemaphoreMutex` để ngăn ngừa xung đột dữ liệu (*Race Condition*).
+2. **Quản lý bộ nhớ Heap hiệu quả:** Máy chủ bất đồng bộ sử dụng nhiều bộ đệm động; hạn chế tối đa việc sử dụng chuỗi đối tượng `String` của Arduino nhằm tránh phân mảnh bộ nhớ (*Heap Fragmentation*). Khuyến nghị dùng `snprintf` và mảng ký tự cố định.
+3. **An toàn khi nâng cấp OTA:** Trong quá trình nạp firmware qua mạng, tuyệt đối không ngắt nguồn điện để tránh làm hỏng phân vùng nạp chương trình (*Bootloader Panic*).

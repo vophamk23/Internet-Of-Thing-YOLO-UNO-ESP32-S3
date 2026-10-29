@@ -1,0 +1,871 @@
+\setcounter{table}{0}
+\setcounter{figure}{0}
+
+\section{Tổng Quan Hệ Thống và Kiến Trúc Thiết Kế}
+
+\subsection{Mô tả bài toán và Mục tiêu thực hành}
+Trong bài thực hành số 4, mục tiêu trọng tâm là xây dựng một hệ thống giám sát và cấu hình mạng không dây hoàn chỉnh trên vi điều khiển \textbf{ESP32-S3 (Kit YoloUNO)}. Hệ thống khởi động ở chế độ Access Point (SoftAP), cho phép người dùng dùng smartphone kết nối trực tiếp vào địa chỉ IP \texttt{192.168.4.1} để mở giao diện Web Dashboard giám sát nhiệt độ, độ ẩm và điều khiển các thiết bị ngoại vi (LED1, LED2). Đồng thời, thông qua trang cấu hình Wi-Fi (\texttt{/settings}), người dùng có thể cấp phát thông tin đăng nhập (SSID và Mật khẩu) của Router gia đình/phòng lab cho ESP32.
+
+Sau khi nhận thông tin cấu hình, ESP32 chuyển sang chế độ Station (STA), kết nối vào Router và nhận địa chỉ IP cục bộ qua DHCP. Một khi kết nối Internet thành công, hệ thống sử dụng cơ chế đồng bộ hóa nhị phân của FreeRTOS (\texttt{xBinarySemaphoreInternet}) để đánh thức tác vụ mạng (\texttt{internet\_task}), kích hoạt việc đồng bộ thời gian và đẩy dữ liệu viễn trắc (Telemetry) cùng cảnh báo nguy cấp lên nền tảng đám mây \textbf{CoreIOT (ThingsBoard API)}. Người dùng có thể nhấn nút bấm cứng \texttt{BOOT} (GPIO 0) bất kỳ lúc nào để chuyển trạng thái board trở về chế độ Access Point phục vụ việc tái cấu hình.
+
+\subsection{Các Route HTTP và Chuẩn giao tiếp Web Server}
+Web Server trên ESP32-S3 lắng nghe trên cổng mặc định \texttt{80} và xử lý 5 Route HTTP chính thông qua phương thức \texttt{HTTP\_GET}. Giao diện Dashboard tự động cập nhật số liệu bằng cơ chế \textbf{HTTP Polling} từ JavaScript với chu kỳ 3 giây/lần.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|>{\ttfamily\bfseries}c|>{\ttfamily}m{3.2cm}|>{\centering\arraybackslash}m{4.2cm}|X|}
+\hline
+\rowcolor{codeframe!40}
+\textbf{Route} & \textbf{Handler} & \textbf{Dữ liệu trả về} & \textbf{Cơ chế kích hoạt} \\
+\hline
+/ & handleRoot & Trang HTML Dashboard & Nhập địa chỉ hoặc mở trang chủ \\
+\hline
+/sensors & handleSensors & \begin{tabular}{@{}c@{}}JSON \\ \texttt{\{"temp":29.5,} \\ \texttt{"hum":61.0\}}\end{tabular} & JavaScript Polling mỗi 3 giây \\
+\hline
+/toggle?led=1|2 & handleToggle & \begin{tabular}{@{}c@{}}JSON \\ \texttt{\{"led1":"ON",} \\ \texttt{"led2":"OFF"\}}\end{tabular} & Người dùng nhấn nút bật/tắt LED \\
+\hline
+/settings & handleSettings & Trang HTML Cấu hình Wi-Fi & Người dùng nhấn nút "Cài đặt" \\
+\hline
+/connect & handleConnect & Chuỗi văn bản \texttt{"Connecting...."} & Người dùng nhấn nút "Kết nối" \\
+\hline
+/status & handleStatus & JSON trạng thái kết nối & Polling kiểm tra kết quả kết nối (Bài 4) \\
+\hline
+\end{tabularx}
+\caption{Bảng tổng hợp các Route HTTP của Web Server trên ESP32-S3}
+\label{tab:http-routes}
+\end{table}
+
+\subsection{Máy trạng thái hữu hạn (FSM) của Firmware}
+Vòng đời hoạt động của hệ thống được quản lý thông qua máy trạng thái 3 giai đoạn: \textbf{AP\_MODE}, \textbf{CONNECTING} và \textbf{STA\_CONNECTED}. Cơ chế chuyển trạng thái được kích hoạt thông qua sự kiện nhận yêu cầu từ Web Server, bộ định thời timeout 10 giây và tín hiệu ngắt phần cứng từ nút bấm \texttt{BOOT}.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.92\textwidth}{!}{
+\begin{tikzpicture}[
+    node distance=2.2cm,
+    state/.style={rectangle, rounded corners=12pt, draw=blue!70!black, fill=blue!5, line width=1.5pt, minimum width=3.4cm, minimum height=1.6cm, align=center, font=\bfseries},
+    trans/.style={->, >=stealth, line width=1.2pt, color=darkgray, font=\small\bfseries}
+]
+    \node[state, fill=teal!10, draw=teal!80!black] (ap) at (0, 0) {AP\_MODE\\(\texttt{isAPMode = true})\\IP: 192.168.4.1};
+    \node[state, fill=blue!10, draw=blue!80!black] (conn) at (6, 2.5) {CONNECTING\\(\texttt{connecting = true})\\Timeout: 10 giây};
+    \node[state, fill=purple!10, draw=purple!80!black] (sta) at (12, 0) {STA\_CONNECTED\\(\texttt{isWifiConnected = true})\\IP Router (DHCP)};
+
+    \draw[trans, color=black] (-2.5, 0) -- node[above, font=\footnotesize] {Power-on / Reset} (ap);
+    \draw[trans, color=blue!70!black] (ap) to[bend left=20] node[above left, align=center] {Nhận GET \texttt{/connect}\\Bắt đầu kết nối} (conn);
+    \draw[trans, color=teal!70!black] (conn) to[bend left=20] node[below right, align=center] {Timeout 10s thất bại\\hoặc nhấn BOOT} (ap);
+    \draw[trans, color=purple!70!black] (conn) to[bend left=20] node[above right, align=center] {WL\_CONNECTED\\\texttt{xSemaphoreGive()}} (sta);
+    \draw[trans, color=red!70!black] (sta) to[bend left=25] node[below, align=center] {Nhấn nút BOOT (GPIO 0) $\to$ Trở về AP} (ap);
+\end{tikzpicture}
+}
+\caption{Sơ đồ máy trạng thái hữu hạn (FSM) quản lý chế độ mạng của Firmware ESP32-S3}
+\label{fig:fsm-network}
+\end{figure}
+
+\subsection{Kiến trúc đa tác vụ FreeRTOS và Đồng bộ hóa}
+Nhằm đảm bảo Web Server phản hồi mượt mà không bị nghẽn (non-blocking), hệ thống phân tách thành 3 tác vụ FreeRTOS chuyên biệt:
+\begin{enumerate}
+    \item \textbf{Tác vụ Máy chủ (\texttt{main\_server\_task})}: Chạy với độ ưu tiên 2, bộ nhớ Stack 8192 byte. Nhiệm vụ phục vụ các yêu cầu HTTP đang chờ (\texttt{server.handleClient()}), quét phím bấm \texttt{BOOT} và giám sát tiến trình kết nối mạng.
+    \item \textbf{Tác vụ Cảm biến (\texttt{sensor\_task})}: Chạy với độ ưu tiên 1, Stack 2048 byte. Chu kỳ 2 giây/lần lấy mẫu nhiệt độ và độ ẩm, thực hiện đưa mẫu vào bộ đệm vòng với cơ chế bảo vệ Mutex (\texttt{xSensorMutex}).
+    \item \textbf{Tác vụ Mạng Internet (\texttt{internet\_task})}: Chạy với độ ưu tiên 1, Stack 4096 byte. Tác vụ bị treo (\texttt{BLOCKED}) tại hàm \texttt{xSemaphoreTake(..., portMAX\_DELAY)} nhằm giải phóng 100\% CPU. Khi có tín hiệu Internet sẵn sàng, tác vụ thức dậy để kết nối MQTT và gửi dữ liệu lên CoreIOT Cloud.
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.92\textwidth}{!}{
+\begin{tikzpicture}[
+    node distance=1.8cm,
+    task/.style={rectangle, rounded corners=8pt, draw=blue!80!black, fill=blue!8, line width=1.2pt, minimum width=3.8cm, minimum height=2.2cm, align=left, font=\footnotesize},
+    sem/.style={circle, draw=orange!90!black, fill=orange!20, line width=1.5pt, minimum size=1.8cm, align=center, font=\bfseries\small},
+    mutex/.style={circle, draw=teal!90!black, fill=teal!20, line width=1.5pt, minimum size=1.8cm, align=center, font=\bfseries\small},
+    arrow/.style={->, >=stealth, line width=1.2pt}
+]
+    \node[task, draw=teal!80!black, fill=teal!5] (sensor) at (0, 0) {
+        \textbf{\large sensor\_task}\\
+        \textbf{Priority: 1 | Stack: 2KB}\\
+        $\bullet$ Chu kỳ đọc mẫu: 2 giây\\
+        $\bullet$ Ghi mẫu vào Circular Buffer\\
+        $\bullet$ Gọi \texttt{addSample(t, h)}
+    };
+
+    \node[mutex] (mtx) at (5, 0) {xSensor\\Mutex};
+
+    \node[task, draw=blue!80!black, fill=blue!5] (server) at (5, 3.8) {
+        \textbf{\large main\_server\_task}\\
+        \textbf{Priority: 2 | Stack: 8KB}\\
+        $\bullet$ Lắng nghe HTTP: \texttt{server.handleClient()}\\
+        $\bullet$ Quét nút \texttt{BOOT} $\to$ \texttt{startAP()}\\
+        $\bullet$ Giám sát kết nối Router (10s)\\
+        $\bullet$ Phát tín hiệu: \texttt{xSemaphoreGive()}
+    };
+
+    \node[sem] (sem) at (10, 3.8) {Binary\\Semaphore};
+
+    \node[task, draw=purple!80!black, fill=purple!5] (net) at (10, 0) {
+        \textbf{\large internet\_task}\\
+        \textbf{Priority: 1 | Stack: 4KB}\\
+        $\bullet$ Chờ: \texttt{xSemaphoreTake(..., MAX)}\\
+        $\bullet$ Kết nối MQTT CoreIOT Broker\\
+        $\bullet$ Đẩy Telemetry mỗi 10 giây\\
+        $\bullet$ Báo động khẩn cấp khi Danger
+    };
+
+    \draw[arrow, color=teal!80!black] (sensor) -- node[above, font=\scriptsize] {Ghi mẫu} (mtx);
+    \draw[arrow, color=teal!80!black] (server) -- node[right, font=\scriptsize] {Đọc trung bình} (mtx);
+    \draw[arrow, color=orange!90!black] (server) -- node[above, font=\scriptsize] {give} (sem);
+    \draw[arrow, color=orange!90!black] (sem) -- node[right, font=\scriptsize] {take} (net);
+\end{tikzpicture}
+}
+\caption{Kiến trúc đa tác vụ FreeRTOS, luồng dữ liệu dùng chung và cơ chế đồng bộ hóa}
+\label{fig:freertos-arch}
+\end{figure}
+
+\subsection{Quy chuẩn các Ngưỡng An toàn Giám sát Môi trường}
+Theo yêu cầu thiết kế hệ thống giám sát phòng thí nghiệm (thiết bị điện tử và con người), các ngưỡng cảnh báo cho Nhiệt độ và Độ ẩm được chuẩn hóa thành 4 mức như trong Bảng \ref{tab:safety-thresholds}.
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|>{\bfseries}c|>{\centering\arraybackslash}m{3.2cm}|>{\centering\arraybackslash}m{3.2cm}|>{\ttfamily\centering\arraybackslash}m{2.5cm}|X|}
+\hline
+\rowcolor{codeframe!40}
+\textbf{Mức trạng thái} & \textbf{Nhiệt độ ($T$)} & \textbf{Độ ẩm ($H$)} & \textbf{Mã màu CSS} & \textbf{Biểu tượng \& Mô tả} \\
+\hline
+Bình thường & Dưới $30^\circ\text{C}$ & Từ $30\%$ đến $< 60\%$ & \#00FFCC & Không có; Môi trường lý tưởng \\
+\hline
+Chú ý & $30^\circ\text{C} \le T < 35^\circ\text{C}$ & Dưới $30\%$ (khô) & \#FFE066 & Vàng; Cần lưu tâm tản nhiệt/tĩnh điện \\
+\hline
+Cảnh báo & $35^\circ\text{C} \le T < 40^\circ\text{C}$ & $60\% \le H < 70\%$ (ẩm) & \#FF9F43 & \textbf{[!]} Cam; Nguy cơ quá nhiệt, ẩm mốc \\
+\hline
+Nguy hiểm & Từ $40^\circ\text{C}$ trở lên & Từ $70\%$ trở lên & \#FF4D4D & \textbf{[!]} Đỏ; Rủi ro chập cháy, ngưng tụ hơi \\
+\hline
+\end{tabularx}
+\caption{Bảng chuẩn hóa các ngưỡng an toàn dùng trong Bài tập 2, 3 và 5}
+\label{tab:safety-thresholds}
+\end{table}
+
+\newpage
+\section{Nội Dung Chi Tiết Các Bài Tập Thực Hành}
+
+% =============================================================================
+% BÀI 0
+% =============================================================================
+\subsection{Bài tập 0: Các Checkpoint Thực Hành D1--D6 và Điều Khiển LED (B6)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Mục tiêu và Nhiệm vụ Bài tập 0}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Hoàn thiện 4 thay đổi FIX trong mã nguồn được phát (\texttt{src/mainserver.cpp}): sửa lỗi \texttt{startAP()}, sửa lỗi bảo mật và ngắt dòng trong \texttt{connectToWiFi()}, gọi \texttt{setupServer()} một lần duy nhất, cấu hình \texttt{pinMode} cho LED.
+    \item Hiện thực hóa mã nguồn điều khiển bật/tắt LED1 (GPIO 48) và LED2 (GPIO 41) bên trong hàm \texttt{handleToggle()} (Nhiệm vụ B6).
+    \item Vượt qua toàn bộ 6 checkpoint thực nghiệm D1 đến D6 trên Kit YoloUNO.
+\end{itemize}
+\end{tcolorbox}
+
+\subsubsection{Chi tiết các điểm hiệu chỉnh kỹ thuật (FIX) và Mã nguồn B6}
+Bốn lỗi tiềm ẩn trong khung mã ban đầu đã được nhận diện và khắc phục triệt để:
+\begin{enumerate}
+    \item \textbf{FIX B3 (\texttt{startAP})}: Bổ sung kiểm tra giá trị trả về của \texttt{WiFi.softAP()}. Nếu mật khẩu nhỏ hơn 8 ký tự, hàm sẽ thất bại và in cảnh báo ra Serial. Đặt lại cờ \texttt{isWifiConnected = false} vì ở chế độ AP không có Internet.
+    \item \textbf{FIX B4 (\texttt{connectToWiFi})}: Loại bỏ hoàn toàn việc in mật khẩu ra cổng Serial nhằm bảo vệ an toàn an ninh mạng; thêm ký tự xuống dòng (\texttt{println}) để log không bị dính chữ.
+    \item \textbf{FIX B5 (\texttt{main\_server\_task})}: Cấu hình \texttt{pinMode(LED1\_PIN, OUTPUT)} và \texttt{pinMode(LED2\_PIN, OUTPUT)}. Di chuyển \texttt{setupServer()} ra ngoài vòng lặp \texttt{while(1)}, chỉ gọi đúng 1 lần duy nhất trong quá trình khởi tạo vì Web Server tiếp tục hoạt động xuyên suốt cả khi chế độ Wi-Fi chuyển đổi giữa AP và Station.
+    \item \textbf{Hiện thực hàm \texttt{handleToggle()}}: Kiểm tra tham số \texttt{led} trong HTTP Request, đảo trạng thái biến boolean và gọi \texttt{digitalWrite()} tương ứng với từng chân GPIO.
+\end{enumerate}
+
+\begin{lstlisting}[caption={Hiện thực hoàn chỉnh hàm handleToggle() điều khiển LED}]
+void handleToggle() {
+    if (server.hasArg("led")) {
+        String led = server.arg("led");
+        if (led == "1") {
+            led1_state = !led1_state;
+            digitalWrite(LED1_PIN, led1_state ? HIGH : LOW);
+        } else if (led == "2") {
+            led2_state = !led2_state;
+            digitalWrite(LED2_PIN, led2_state ? HIGH : LOW);
+        }
+    }
+    // Tra ve JSON phan hoi trang thai cho Client cap nhat nut bam tren Web
+    String json = "{\"led1\":\"" + String(led1_state ? "ON" : "OFF") + 
+                  "\",\"led2\":\"" + String(led2_state ? "ON" : "OFF") + "\"}";
+    server.send(200, "application/json", json);
+}
+\end{lstlisting}
+
+\subsubsection{Kết quả thực nghiệm các Checkpoint D1 đến D6}
+Toàn bộ các bước kiểm thử theo danh mục mong đợi của tài liệu hướng dẫn đã được thực hiện nghiêm ngặt trên Kit YoloUNO với tốc độ truyền 115200 baud:
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|>{\bfseries}c|m{4.8cm}|m{5.2cm}|>{\centering\arraybackslash}X|}
+\hline
+\rowcolor{codeframe!40}
+\textbf{Bước} & \textbf{Thao tác thực hiện} & \textbf{Kết quả thực nghiệm mong đợi} & \textbf{Đánh giá} \\
+\hline
+D1 & Nạp firmware, mở Serial Monitor & Xuất hiện \texttt{AP IP address: 192.168.4.1} & Đạt (100\%) \\
+\hline
+D2 & Kết nối Wi-Fi \texttt{ESP32-TEAM01}, mở \texttt{http://192.168.4.1} & Dashboard xuất hiện; thông số nhiệt độ và độ ẩm cập nhật mỗi 3s & Đạt (100\%) \\
+\hline
+D3 & Nhấn nút LED1 và LED2 trên Web & Nhãn chuyển ON/OFF và LED thực tế trên mạch bật/tắt tức thì & Đạt (100\%) \\
+\hline
+D4 & Vào Cài đặt $\to$ Nhập SSID và Password Router $\to$ Nhấn Kết nối & Hiện \texttt{Connecting....}; điện thoại ngắt kết nối AP (do AP tắt) & Đạt (100\%) \\
+\hline
+D5 & Kết nối điện thoại vào Router & Serial hiện \texttt{STA IP: 192.168.x.y} và \texttt{[NET] Internet ready}; Dashboard mở được tại IP đó & Đạt (100\%) \\
+\hline
+D6 & Nhấn nút bấm cứng BOOT (GPIO 0) & Board trở về AP (\texttt{192.168.4.1}); Dashboard hoạt động trở lại từ AP & Đạt (100\%) \\
+\hline
+Lỗi & Cố tình nhập sai mật khẩu tại D4 & Sau đúng 10s xuất hiện \texttt{WiFi connect failed! Back to AP.} và khôi phục AP & Đạt (100\%) \\
+\hline
+\end{tabularx}
+\caption{Bảng tổng kết thực nghiệm toàn bộ Checkpoint D1 đến D6 và nhánh lỗi}
+\label{tab:checkpoints-d1-d6}
+\end{table}
+
+\newpage
+% =============================================================================
+% BÀI 1
+% =============================================================================
+\subsection{Bài tập 1: Bộ Lọc Trung Bình Trượt (Moving Average 10 Mẫu) Trên ESP32}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu kỹ thuật Bài tập 1}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Hiện thực bộ đệm vòng (Circular Buffer) lưu trữ $N=10$ mẫu đo gần nhất của Nhiệt độ và Độ ẩm do \texttt{sensor\_task} ghi mỗi 2 giây (cửa sổ trượt 20 giây).
+    \item Xử lý an toàn khi bộ đệm chưa đầy ($buf\_count < 10$): chỉ tính trung bình trên các mẫu thực tế đã có; trả về \texttt{false} nếu $buf\_count == 0$ để ngăn ngừa lỗi chia cho 0.
+    \item Bảo vệ bộ đệm vòng bằng FreeRTOS Mutex (\texttt{xSensorMutex}) ngăn chặn xung đột tài nguyên giữa tác vụ cảm biến và tác vụ máy chủ.
+    \item Cả API \texttt{/sensors} và giao diện render ban đầu của \texttt{mainPage()} đều sử dụng giá trị trung bình kèm nhãn chú thích \texttt{"(TB của 10)"}.
+    \item Xuất log đối chiếu giá trị thô và giá trị trung bình liên tục tối thiểu 12 mẫu ra Serial Monitor.
+\end{itemize}
+\end{tcolorbox}
+
+\subsubsection{Mã nguồn lớp xử lý trung bình trượt (\texttt{include/sensor\_avg.h} và \texttt{src/sensor\_avg.cpp})}
+
+\begin{lstlisting}[caption={Cơ chế thêm mẫu và tính toán trung bình trượt an toàn với Mutex}]
+#define AVG_N 10
+static float temp_buf[AVG_N];
+static float hum_buf[AVG_N];
+static int buf_idx = 0;
+static int buf_count = 0;
+SemaphoreHandle_t xSensorMutex = NULL;
+
+void addSample(float t, float h) {
+    if (xSensorMutex == NULL) return;
+    // Lay Mutex voi timeout 100ms de tranh Deadlock
+    if (xSemaphoreTake(xSensorMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        temp_buf[buf_idx] = t;
+        hum_buf[buf_idx]  = h;
+        buf_idx = (buf_idx + 1) % AVG_N; // Quay vong chi so
+        if (buf_count < AVG_N) {
+            buf_count++;
+        }
+        xSemaphoreGive(xSensorMutex); // Tra Mutex
+    }
+}
+
+bool getAverage(float *t_avg, float *h_avg) {
+    if (xSensorMutex == NULL) return false;
+    if (xSemaphoreTake(xSensorMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // Xu ly dac biet khi vua khoi dong chua co mau nao
+        if (buf_count == 0) {
+            xSemaphoreGive(xSensorMutex);
+            return false;
+        }
+        float sum_t = 0.0f, sum_h = 0.0f;
+        for (int i = 0; i < buf_count; i++) {
+            sum_t += temp_buf[i];
+            sum_h += hum_buf[i];
+        }
+        *t_avg = sum_t / buf_count; // Chia dung cho so mau hien huu
+        *h_avg = sum_h / buf_count;
+        xSemaphoreGive(xSensorMutex);
+        return true;
+    }
+    return false;
+}
+\end{lstlisting}
+
+\subsubsection{Cập nhật Route \texttt{/sensors} và Giao diện Dashboard}
+Tại hàm \texttt{handleSensors()}, thay vì đọc giá trị thô từ biến toàn cục, ta gọi hàm \texttt{getAverage(\&t\_avg, \&h\_avg)}. Trong trang HTML \texttt{mainPage()}, nhãn hiển thị được đính kèm chuỗi \texttt{(TB của 10)} và giá trị ban đầu được tính toán từ các mẫu sẵn có.
+
+\subsubsection{Nhật ký thực nghiệm Serial Monitor (14 mẫu đo liên tục)}
+Dưới đây là trích đoạn log Serial thực tế chứng minh bộ lọc hoạt động mượt mà, loại bỏ các gai nhọn (noise spikes) của giá trị cảm biến thô:
+\begin{lstlisting}[language={}]
+[SAMPLE #01] Raw: T=28.45 C, H=61.20 % | Avg(10): T=28.45 C, H=61.20 %
+[SAMPLE #02] Raw: T=30.12 C, H=64.80 % | Avg(10): T=29.28 C, H=63.00 %
+[SAMPLE #03] Raw: T=29.80 C, H=62.40 % | Avg(10): T=29.46 C, H=62.80 %
+[SAMPLE #04] Raw: T=28.10 C, H=60.10 % | Avg(10): T=29.12 C, H=62.12 %
+[SAMPLE #05] Raw: T=30.95 C, H=64.95 % | Avg(10): T=29.48 C, H=62.69 %
+[SAMPLE #06] Raw: T=29.20 C, H=61.70 % | Avg(10): T=29.44 C, H=62.52 %
+[SAMPLE #07] Raw: T=28.65 C, H=60.50 % | Avg(10): T=29.32 C, H=62.24 %
+[SAMPLE #08] Raw: T=30.40 C, H=63.80 % | Avg(10): T=29.46 C, H=62.43 %
+[SAMPLE #09] Raw: T=29.90 C, H=62.10 % | Avg(10): T=29.51 C, H=62.39 %
+[SAMPLE #10] Raw: T=28.30 C, H=60.90 % | Avg(10): T=29.39 C, H=62.24 %
+[SAMPLE #11] Raw: T=30.80 C, H=64.20 % | Avg(10): T=29.62 C, H=62.54 %
+[SAMPLE #12] Raw: T=29.10 C, H=61.40 % | Avg(10): T=29.52 C, H=62.20 %
+[SAMPLE #13] Raw: T=28.75 C, H=60.80 % | Avg(10): T=29.42 C, H=62.04 %
+[SAMPLE #14] Raw: T=30.25 C, H=63.50 % | Avg(10): T=29.63 C, H=62.38 %
+\end{lstlisting}
+
+\subsubsection{Phân tích lý thuyết chuyên sâu Bài 1}
+\begin{tcolorbox}[colback=blue!5,colframe=blue!75!black,title=\textbf{Câu hỏi lý thuyết 1: Vì sao bắt buộc phải sử dụng Mutex và hệ quả nếu không có?}]
+\textbf{Phân tích:} \\
+Trong hệ điều hành thời gian thực FreeRTOS trên ESP32-S3 đa nhân, \texttt{sensor\_task} (ghi dữ liệu) và \texttt{main\_server\_task} (đọc dữ liệu) thực thi hoàn toàn bất đồng bộ. Thao tác ghi mảng số thực và cập nhật các con trỏ chỉ số (\texttt{buf\_idx}, \texttt{buf\_count}) gồm chuỗi nhiều chỉ lệnh CPU máy (non-atomic). Nếu không dùng \texttt{xSensorMutex}, hiện tượng tranh chấp điều khiển (Race Condition) chắc chắn sẽ xảy ra khi một ngắt điều độ (Tick Interrupt) ngắt ngang quá trình ghi mẫu của \texttt{sensor\_task}. Khi đó, tác vụ server sẽ đọc phải trạng thái dữ liệu dở dang (Torn Read), hoặc chỉ số con trỏ bị sai lệch dẫn đến đọc tràn bộ nhớ (Out-of-bounds Read), khiến Web Dashboard hiển thị các giá trị rác hoặc giá trị âm bất thường.
+\end{tcolorbox}
+
+\begin{tcolorbox}[colback=blue!5,colframe=blue!75!black,title=\textbf{Câu hỏi lý thuyết 2: Vì sao getAverage() bắt buộc phải xử lý trường hợp buf\_count == 0?}]
+\textbf{Phân tích:} \\
+Tại thời điểm hệ thống vừa cấp nguồn, Web Server đã bắt đầu lắng nghe và có thể phục vụ yêu cầu từ Client ngay lập tức trong khi \texttt{sensor\_task} chưa kịp hoàn thành chu kỳ lấy mẫu đầu tiên (tức $buf\_count = 0$). Nếu không có khối kiểm tra $buf\_count == 0$, biểu thức tính trung bình sẽ thực hiện phép chia cho 0 (\texttt{sum / 0}). Trong chuẩn biểu diễn số thực IEEE 754, phép toán này sẽ tạo ra giá trị đặc biệt \texttt{NaN} (Not-a-Number) hoặc \texttt{Inf}. Chuỗi JSON sinh ra sẽ có dạng \texttt{\{"temp":NaN,"hum":NaN\}}, làm cho hàm \texttt{JSON.parse()} phía JavaScript trên trình duyệt bị lỗi nghiêm trọng (\texttt{SyntaxError}), dẫn đến việc Dashboard bị treo hoàn toàn giao diện.
+\end{tcolorbox}
+
+\newpage
+% =============================================================================
+% BÀI 2
+% =============================================================================
+\subsection{Bài tập 2: Phân Loại Ngưỡng Nhiệt Độ Trên Trình Duyệt (Client-Side)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu kỹ thuật Bài tập 2}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Định nghĩa cấu trúc ngưỡng duy nhất dưới dạng đối tượng JavaScript: \texttt{const T\_LIMIT = \{ caution: 30, warning: 35, danger: 40 \};}. Tuyệt đối không dùng số ma thuật (magic numbers).
+    \item Xử lý logic tô màu phần tử \texttt{\#temp}, hiển thị biểu tượng cảnh báo \textbf{[!]} cho hai mức Cảnh báo và Nguy hiểm, đồng thời gắn nhãn văn bản: \textit{Bình thường, Chú ý, Cảnh báo, Nguy hiểm}.
+    \item Toàn bộ giải thuật được thực thi hoàn toàn trên trình duyệt Client (JavaScript trong \texttt{mainPage()}), không sửa đổi mã nguồn backend ESP32.
+\end{itemize}
+\end{tcolorbox}
+
+\subsubsection{Mã nguồn đối tượng JavaScript và Hàm cập nhật giao diện}
+Đoạn mã JavaScript xử lý phân loại ngưỡng được nhúng trực tiếp trong trang HTML trả về từ \texttt{mainPage()}:
+
+\begin{lstlisting}[language=C++]
+// Dinh nghia doi tuong nguong nhiet do duy nhat
+const T_LIMIT = { caution: 30, warning: 35, danger: 40 };
+
+function updateSensors() {
+  fetch('/sensors')
+    .then(response => response.json())
+    .then(d => {
+      let t = d.temp;
+      let color = '#00FFCC'; // Mac dinh: Binh thuong
+      let icon = '';
+      let text = 'Binh thuong';
+
+      // Phan loai muc nguong nhiet do theo chuan Bieu Mau
+      if (t >= T_LIMIT.danger) {
+        color = '#FF4D4D';
+        icon = '[!] ';
+        text = 'Nguy hiem';
+      } else if (t >= T_LIMIT.warning) {
+        color = '#FF9F43';
+        icon = '[!] ';
+        text = 'Canh bao';
+      } else if (t >= T_LIMIT.caution) {
+        color = '#FFE066';
+        text = 'Chu y';
+      }
+
+      let elTemp = document.getElementById('temp');
+      let elLbl  = document.getElementById('temp_label');
+
+      elTemp.style.color = color;
+      elTemp.innerHTML = icon + t.toFixed(2);
+
+      elLbl.style.color = color;
+      elLbl.innerText = text;
+    })
+    .catch(err => console.error('Fetch error:', err));
+}
+setInterval(updateSensors, 3000);
+\end{lstlisting}
+
+\subsubsection{Phân tích ưu điểm và nhược điểm của Kiến trúc Client-Side}
+\begin{tcolorbox}[colback=blue!5,colframe=blue!75!black,title=\textbf{So sánh kiến trúc: Đánh giá ngưỡng trên Trình duyệt vs. trên Vi điều khiển ESP32}]
+\textbf{1. Ưu điểm của giải pháp xử lý trên Trình duyệt (Client-Side):}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Tiết kiệm tài nguyên vi điều khiển}: Giảm tải chu kỳ tính toán của CPU và bộ nhớ Flash/RAM của ESP32. Server chỉ truyền tải các con số thuần túy gọn nhẹ qua mạng.
+    \item \textbf{Tùy biến giao diện linh hoạt}: Cho phép thay đổi bảng màu (CSS Palette), hiệu ứng chuyển động, hiển thị đa ngôn ngữ (Localization) hoặc thay đổi ngưỡng theo sở thích người dùng mà không cần phải biên dịch và nạp lại firmware cho thiết bị phần cứng.
+\end{itemize}
+\textbf{2. Nhược điểm của giải pháp xử lý trên Trình duyệt:}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Phân tán logic (Lack of Single Source of Truth)}: Nếu hệ thống có nhiều ứng dụng cùng kết nối (Mobile App, Web, LCD tại chỗ, MQTT Broker), mỗi ứng dụng phải viết lại logic phân loại ngưỡng, dễ dẫn đến hiện tượng bất nhất dữ liệu báo động.
+    \item \textbf{Mất tính tự chủ tại tầng biên (No Edge Autonomy)}: Vi điều khiển không biết khi nào môi trường thực sự nguy hiểm để tự động kích hoạt còi báo động, ngắt rơ-le hoặc gửi tin nhắn khẩn cấp nếu người dùng đóng trình duyệt hoặc mất kết nối mạng.
+\end{itemize}
+\end{tcolorbox}
+
+\newpage
+% =============================================================================
+% BÀI 3
+% =============================================================================
+\subsection{Bài tập 3: Mức Độ Ẩm Tính Trên ESP32 với Thuật Toán Trễ (1\% Hysteresis)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu kỹ thuật Bài tập 3}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Xây dựng hàm C++ \texttt{const char *humLevel(float h)} trên ESP32 trả về \texttt{"ok"}, \texttt{"dry"}, \texttt{"humid"}, \texttt{"danger"} sử dụng các hằng số: $H_{\text{dry}} = 30\%$, $H_{\text{humid}} = 60\%$, $H_{\text{danger}} = 70\%$.
+    \item Tích hợp vùng trễ (Hysteresis) $1\%$ để chống hiện tượng chập chờn (flickering) khi giá trị cảm biến dao động quanh ngưỡng biên.
+    \item Bổ sung trường \texttt{"hum\_level"} vào chuỗi JSON của endpoint \texttt{/sensors}.
+    \item Ghi log ra Serial \textbf{chỉ khi mức thay đổi} (State Change Latch): \texttt{[HUM] level ok -> humid (64.2 \%)}.
+    \item Giao diện Web hiển thị màu sắc và biểu tượng \textbf{[!]} dựa trên mức nhận được từ ESP32.
+\end{itemize}
+\end{tcolorbox}
+
+\subsubsection{Thuật toán Hysteresis 1\% và Mã nguồn C++ trên ESP32}
+Cảm biến DHT20 có độ phân giải và sai số khoảng $\pm 3\%$ RH. Nếu không có Hysteresis, khi độ ẩm dao động quanh ranh giới $60\%$ (vd: $59.9\% \leftrightarrow 60.1\%$), mức trạng thái sẽ bị đảo liên tục, gây ra bão cảnh báo. Thuật toán trễ thiết lập quy tắc:
+\begin{itemize}
+    \item Để bước vào mức \texttt{"humid"}: Độ ẩm phải tăng vượt qua $60.0\%$.
+    \item Để quay trở lại mức \texttt{"ok"}: Độ ẩm phải giảm xuống dưới $60.0 - 1.0 = 59.0\%$.
+    \item Để bước vào mức \texttt{"danger"}: Độ ẩm phải vượt qua $70.0\%$; để hạ về \texttt{"humid"} phải giảm dưới $69.0\%$.
+    \item Để bước vào mức \texttt{"dry"}: Độ ẩm phải giảm dưới $30.0\%$; để trở lại \texttt{"ok"} phải tăng vượt $31.0\%$.
+\end{itemize}
+
+\begin{lstlisting}[caption={Hàm humLevel() tích hợp Hysteresis 1\% và chốt log thay đổi trạng thái}]
+#define H_DRY    30.0f
+#define H_HUMID  60.0f
+#define H_DANGER 70.0f
+#define H_HYST    1.0f
+
+enum HumState { STATE_DRY, STATE_OK, STATE_HUMID, STATE_DANGER };
+static HumState current_hum_state = STATE_OK;
+static bool is_hum_initialized = false;
+
+const char* humLevel(float h) {
+    // 1. Khoi tao trang thai thuc te o lan doc dau tien
+    if (!is_hum_initialized) {
+        if (h >= H_DANGER)       current_hum_state = STATE_DANGER;
+        else if (h >= H_HUMID)   current_hum_state = STATE_HUMID;
+        else if (h < H_DRY)      current_hum_state = STATE_DRY;
+        else                     current_hum_state = STATE_OK;
+        is_hum_initialized = true;
+    }
+
+    HumState prev_state = current_hum_state;
+
+    // 2. Chuyen doi trang thai voi dai tre Hysteresis 1%
+    switch (current_hum_state) {
+        case STATE_DRY:
+            // Chi roi muc DRY khi do am vuot han 30% + 1% = 31%
+            if (h >= H_DRY + H_HYST) {
+                if (h >= H_DANGER)      current_hum_state = STATE_DANGER;
+                else if (h >= H_HUMID)  current_hum_state = STATE_HUMID;
+                else                    current_hum_state = STATE_OK;
+            }
+            break;
+
+        case STATE_OK:
+            if (h < H_DRY) {
+                current_hum_state = STATE_DRY;
+            } else if (h >= H_DANGER) {
+                current_hum_state = STATE_DANGER;
+            } else if (h >= H_HUMID) {
+                current_hum_state = STATE_HUMID;
+            }
+            break;
+
+        case STATE_HUMID:
+            if (h >= H_DANGER) {
+                current_hum_state = STATE_DANGER;
+            } else if (h < H_HUMID - H_HYST) { // < 59% moi roi muc humid xuong
+                if (h < H_DRY) current_hum_state = STATE_DRY;
+                else           current_hum_state = STATE_OK;
+            }
+            break;
+
+        case STATE_DANGER:
+            if (h < H_DANGER - H_HYST) { // < 69% moi roi muc danger xuong
+                if (h < H_DRY)        current_hum_state = STATE_DRY;
+                else if (h < H_HUMID) current_hum_state = STATE_OK;    // < 60% la OK
+                else                  current_hum_state = STATE_HUMID; // 60%..68.9% la HUMID
+            }
+            break;
+    }
+
+    // 3. Co che chot log: Chi in khi trang thai thay doi
+    if (current_hum_state != prev_state) {
+        auto getStateName = [](HumState s) -> const char* {
+            switch(s) {
+                case STATE_DRY:    return "dry";
+                case STATE_OK:     return "ok";
+                case STATE_HUMID:  return "humid";
+                case STATE_DANGER: return "danger";
+                default:           return "ok";
+            }
+        };
+        Serial.printf("[HUM] level %s -> %s (%.1f %%)
+", 
+                      getStateName(prev_state), getStateName(current_hum_state), h);
+    }
+
+    switch (current_hum_state) {
+        case STATE_DRY:    return "dry";
+        case STATE_OK:     return "ok";
+        case STATE_HUMID:  return "humid";
+        case STATE_DANGER: return "danger";
+        default:           return "ok";
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Nhật ký Serial Monitor ghi nhận chuyển mức trạng thái}
+\begin{lstlisting}[language={}]
+[HUM] level ok -> humid (60.8 %)
+[HUM] level humid -> danger (71.2 %)
+[HUM] level danger -> humid (68.4 %)
+[HUM] level humid -> ok (58.6 %)
+\end{lstlisting}
+
+\subsubsection{Phân tích lý thuyết chuyên sâu Bài 3}
+\begin{tcolorbox}[colback=blue!5,colframe=blue!75!black,title=\textbf{So sánh lựa chọn kiến trúc: Bài 2 hay Bài 3 cho hệ sinh thái đa Client và MQTT?}]
+\textbf{Khẳng định:} Bắt buộc phải lựa chọn \textbf{Kiến trúc Bài tập 3 (Tính toán tập trung trên ESP32)}. \\
+\textbf{Lý giải chi tiết:}
+\begin{enumerate}
+    \item \textbf{Nguyên tắc Điểm cốt lõi duy nhất (Single Source of Truth)}: Khi có 3 trang web khác nhau, một thiết bị điều khiển phần cứng và một MQTT Client cùng giám sát hệ thống, việc tính toán mức trên ESP32 bảo đảm rằng tất cả các thực thể đều nhận được cùng một trạng thái nhất quán tuyệt đối.
+    \item \textbf{Đơn giản hóa phía Client}: Các Client nhận chuỗi \texttt{"hum\_level"} có sẵn, chỉ việc ánh xạ trực tiếp sang mã màu CSS hoặc icon hiển thị mà không cần tải thêm thư viện hay xử lý toán học phức tạp.
+    \item \textbf{Khả năng phản ứng tự động tại tầng biên}: Giúp ESP32 chủ động đóng ngắt rơ-le tản nhiệt hoặc gửi cảnh báo tức thời lên Cloud CoreIOT ngay khi xuất hiện mức \texttt{"danger"} mà hoàn toàn không cần sự hiện diện của bất kỳ trình duyệt web nào.
+\end{enumerate}
+\end{tcolorbox}
+
+\newpage
+% =============================================================================
+% BÀI 4
+% =============================================================================
+\subsection{Bài tập 4 (Bài Mở AI): Giữ AP Hoạt Động Trong Khi Kết Nối Wi-Fi}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Vấn đề và Mục tiêu thiết kế Bài tập 4}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item \textbf{Vấn đề trong mã gốc}: Khi nhấn "Kết nối", hàm gọi \texttt{WiFi.mode(WIFI\_STA)} lập tức làm tắt Access Point. Smartphone mất kết nối Wi-Fi ngay tức thì, trình duyệt báo lỗi timeout và người dùng không bao giờ biết được kết quả kết nối thành công hay thất bại, cũng như không biết IP mới được Router cấp là gì.
+    \item \textbf{Giải pháp thiết kế}: Kích hoạt chế độ Wi-Fi kép \texttt{WIFI\_AP\_STA}. Duy trì Access Point để phục vụ trang web và cung cấp phản hồi trực quan thời gian thực (Real-time Feedback) qua cơ chế Polling endpoint \texttt{/status}.
+\end{itemize}
+\end{tcolorbox}
+
+\subsubsection{Nhật ký Prompting và Phân tích tương tác với Trợ lý AI}
+Quá trình thiết kế được hoàn thiện qua 2 vòng lặp (iterations) với sự hỗ trợ của công cụ AI:
+\begin{itemize}
+    \item \textbf{Vòng lặp 1 (Prompt đầu tiên)}: Yêu cầu AI đề xuất cách hiển thị kết quả kết nối trên trang web sau khi người dùng nhấn Kết nối mà không làm mất kết nối AP.
+    \begin{itemize}
+        \item \textit{Đề xuất của AI}: AI đề xuất chuyển sang \texttt{WIFI\_AP\_STA} và cho hàm \texttt{handleConnect()} chạy vòng lặp \texttt{while(WiFi.status() != WL\_CONNECTED)} trong 10 giây để chờ kết quả rồi mới trả về mã HTML có chứa IP mới.
+        \item \textit{Phân tích sai lầm}: Thiết kế này vi phạm nghiêm trọng ràng buộc hệ thống nhúng! Lệnh chờ chặn (\texttt{blocking delay}) 10 giây bên trong handler sẽ làm treo toàn bộ Web Server, khiến \texttt{server.handleClient()} không thể phục vụ các request khác, dẫn đến trình duyệt bị timeout và FreeRTOS Watchdog Timer (WDT) có thể kích hoạt khởi động lại board.
+    \end{itemize}
+    \item \textbf{Vòng lặp 2 (Prompt hiệu chỉnh)}: Yêu cầu AI thiết kế theo mô hình \textbf{Bất đồng bộ (Asynchronous Pattern)}: \texttt{handleConnect()} gửi phản hồi ngay tức thì; phía Client JavaScript chạy bộ định thời \texttt{setInterval()} gọi một API phụ \texttt{/status} mỗi 1 giây để thăm dò trạng thái (\texttt{CONNECTING}, \texttt{CONNECTED}, \texttt{FAILED}).
+    \begin{itemize}
+        \item \textit{Kết quả hiệu chỉnh}: Đạt yêu cầu tuyệt đối, phản hồi mượt mà không làm nghẽn CPU, người dùng theo dõi được thanh tiến trình và nhận thông báo IP mới trực tiếp trên màn hình cài đặt.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Mã nguồn hoàn chỉnh giải pháp Dual AP+STA và Polling Status}
+
+\begin{lstlisting}[caption={Cấu hình Wi-Fi kép và Handler /status phục vụ Web Polling}]
+// 1. Khoi tao che do Wi-Fi kep duy tri AP trong suot tien trinh ket noi
+void connectToWiFi() {
+    WiFi.mode(WIFI_AP_STA); // AP van tiep tuc phat song tai 192.168.4.1
+    if (wifi_password.isEmpty()) {
+        WiFi.begin(wifi_ssid.c_str());
+    } else {
+        WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+    }
+    Serial.printf("[DUAL] Ket noi: %s (AP van hoat dong)\n", wifi_ssid.c_str());
+}
+
+// 2. Endpoint /status cung cap trang thai thoi gian thuc cho Client
+void handleStatus() {
+    String json = "{";
+    if (isWifiConnected) {
+        json += "\"state\":\"CONNECTED\",\"ip\":\"" + WiFi.localIP().toString() + "\"";
+    } else if (connecting) {
+        json += "\"state\":\"CONNECTING\",\"ip\":\"\"";
+    } else {
+        json += "\"state\":\"FAILED\",\"ip\":\"\"";
+    }
+    json += "}";
+    server.send(200, "application/json", json);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=C++, caption={JavaScript tren trang /settings tu dong hoi vong /status}]
+function startConnect() {
+  let s = document.getElementById('ssid').value.trim();
+  let p = document.getElementById('pass').value;
+  document.getElementById('status-area').innerHTML = '<span class="spinner"></span> Connecting....';
+
+  fetch('/connect?ssid=' + encodeURIComponent(s) + '&pass=' + encodeURIComponent(p));
+  let poll = setInterval(() => {
+    fetch('/status').then(r => r.json()).then(data => {
+      if (data.state === 'CONNECTED') {
+        clearInterval(poll);
+        document.getElementById('status-area').innerHTML = 
+          '<div style="color:#00FFCC;">[V] Ket noi thanh cong!</div>' +
+          '<div>IP moi cua ESP32: <b>' + data.ip + '</b></div>' +
+          '<a href="http://' + data.ip + '">Chuyen sang Dashboard IP moi</a>';
+      } else if (data.state === 'FAILED') {
+        clearInterval(poll);
+        document.getElementById('status-area').innerHTML = 
+          '<div style="color:#FF4D4D;">[X] Ket noi that bai (sai pass/timeout)!</div>' +
+          '<div>Board van duy tri AP: 192.168.4.1 de thu lai.</div>';
+      }
+    });
+  }, 1000);
+}
+\end{lstlisting}
+
+\newpage
+% =============================================================================
+% BÀI 5
+% =============================================================================
+\subsection{Bài tập 5 (Bài Mở AI): Đẩy Dữ Liệu và Cảnh Báo Lên Cloud CoreIOT}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu kỹ thuật Bài tập 5}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Tác vụ \texttt{internet\_task} nhận \texttt{xBinarySemaphoreInternet} khi có mạng Internet, tiến hành thiết lập kết nối MQTT Client đến máy chủ CoreIOT (\texttt{app.coreiot.io:1883}, Access Token làm username).
+    \item Đẩy chuỗi Telemetry JSON trung bình trượt 10 mẫu (\texttt{temperature, humidity}) cùng các mức trạng thái (\texttt{temp\_level, hum\_level}) lên topic \texttt{v1/devices/me/telemetry} định kỳ mỗi 10 giây.
+    \item Tích hợp cơ chế \textbf{State Change Latch}: Khi xuất hiện mức \texttt{"danger"}, gửi ngay lập tức một bản tin báo động khẩn cấp. Chỉ gửi duy nhất 1 lần khi chuyển mức, tuyệt đối không gửi lặp lại mỗi 10 giây.
+    \item Khi nhấn nút \texttt{BOOT} quay về AP: Ngắt kết nối MQTT sạch sẽ và quay lại chờ trên semaphore. Khi mất broker: Áp dụng cơ chế Exponential Back-off để thử kết nối lại.
+\end{itemize}
+\end{tcolorbox}
+
+\subsubsection{Mã nguồn hoàn chỉnh tác vụ \texttt{internet\_task}}
+
+\begin{lstlisting}[caption={Tác vụ internet\_task xử lý MQTT Telemetry, Báo động và Quản lý vòng đời}]
+void internet_task(void *pvParameters) {
+    WiFiClient espClient;
+    PubSubClient mqttClient(espClient);
+    mqttClient.setServer(COREIOT_HOST, COREIOT_PORT);
+
+    bool prev_danger = false;
+    uint32_t last_telemetry_ms = 0;
+    uint32_t reconnect_delay_ms = 2000; // Khoi tao delay back-off 2s
+
+    while (1) {
+        // 1. Cho tren Semaphore Internet san sang (0% CPU khi cho)
+        if (xSemaphoreTake(xBinarySemaphoreInternet, portMAX_DELAY) == pdTRUE) {
+            Serial.println("[NET] Nhan Semaphore -> Ket noi CoreIOT MQTT...");
+            prev_danger = false;
+            last_telemetry_ms = millis() - 10000;
+            reconnect_delay_ms = 2000;
+
+            // 2. Vong lap giu ket noi khi Wi-Fi con hoat dong
+            while (isWifiConnected && WiFi.status() == WL_CONNECTED) {
+                if (!mqttClient.connected()) {
+                    Serial.print("[MQTT] Dang ket noi toi Broker... ");
+                    if (mqttClient.connect("YoloUNO_ESP32S3", COREIOT_TOKEN, "")) {
+                        Serial.println("Thanh cong!");
+                        reconnect_delay_ms = 2000; // Reset thoi gian cho
+                    } else {
+                        Serial.printf("That bai, rc=%d. Thu lai sau %lu ms\n", 
+                                      mqttClient.state(), reconnect_delay_ms);
+                        vTaskDelay(pdMS_TO_TICKS(reconnect_delay_ms));
+                        // Tang thoi gian cho theo cap so nhan (Exponential Back-off, max 30s)
+                        reconnect_delay_ms = (reconnect_delay_ms * 2 > 30000) ? 30000 : reconnect_delay_ms * 2;
+                        continue;
+                    }
+                }
+                mqttClient.loop();
+
+                // 3. Gui Telemetry moi 10 giay
+                if (millis() - last_telemetry_ms >= 10000) {
+                    last_telemetry_ms = millis();
+                    float t_avg = 0.0f, h_avg = 0.0f;
+                    if (getAverage(&t_avg, &h_avg)) {
+                        const char* t_lvl = tempLevel(t_avg);
+                        const char* h_lvl = humLevel(h_avg);
+
+                        char payload[160];
+                        snprintf(payload, sizeof(payload),
+                            "{\"temperature\":%.2f,\"humidity\":%.2f,"
+                            "\"temp_level\":\"%s\",\"hum_level\":\"%s\"}",
+                            t_avg, h_avg, t_lvl, h_lvl);
+                        mqttClient.publish("v1/devices/me/telemetry", payload);
+                        Serial.printf("[COREIOT TELEMETRY] %s\n", payload);
+
+                        // 4. Kiem tra va phat bao dong khan cap (State Change Latch)
+                        bool is_danger = (strcmp(t_lvl, "danger") == 0 || strcmp(h_lvl, "danger") == 0);
+                        if (is_danger && !prev_danger) {
+                            char alarm[160];
+                            snprintf(alarm, sizeof(alarm),
+                                "{\"alarm\":\"HIGH_THRESHOLD_DANGER\","
+                                "\"temp\":%.2f,\"hum\":%.2f,\"msg\":\"Canh bao!\"}",
+                                t_avg, h_avg);
+                            mqttClient.publish("v1/devices/me/telemetry", alarm);
+                            Serial.printf("[COREIOT ALARM SENT] %s\n", alarm);
+                        }
+                        prev_danger = is_danger; // Cap nhat chot trang thai
+                    }
+                }
+                vTaskDelay(pdMS_TO_TICKS(100)); // Nhuong CPU
+            }
+
+            // 5. Khi mat mang hoac nhan nut BOOT: Don dep socket MQTT
+            Serial.println("[NET] Wi-Fi ngat ket noi! Dong MQTT client...");
+            if (mqttClient.connected()) {
+                mqttClient.disconnect();
+            }
+            // Vong lap tro lai dau while(1) va bi chan boi xSemaphoreTake()
+        }
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Phân tích giải pháp kỹ thuật Bài 5}
+\begin{tcolorbox}[colback=blue!5,colframe=blue!75!black,title=\textbf{Giải thích quyền sở hữu tác vụ và cơ chế chống lặp báo động}]
+\textbf{1. Vì sao chỉ duy nhất \texttt{internet\_task} sở hữu MQTT Client?} \\
+Thư viện \texttt{PubSubClient} sử dụng socket TCP tuần tự và không hỗ trợ cơ chế bảo vệ tái nhập (non thread-safe). Nếu nhiều tác vụ cùng gọi \texttt{publish()} hoặc \texttt{loop()}, xung đột bộ nhớ đệm socket sẽ làm sập kết nối mạng. Do đó, việc cô lập toàn bộ MQTT Client vào trong một tác vụ duy nhất \texttt{internet\_task} đảm bảo tính toàn vẹn của dữ liệu và tuân thủ nguyên tắc Single Responsibility.
+
+\textbf{2. Cơ chế State Change Latch ngăn ngừa spam cảnh báo thế nào?} \\
+Biến boolean \texttt{prev\_danger} đóng vai trò là một thanh ghi chốt (Latch). Báo động chỉ được gửi đi khi có sự chuyển dịch sườn lên (\textit{Rising Edge}): $is\_danger == \text{true}$ VÀ $prev\_danger == \text{false}$. Trong các chu kỳ 10 giây tiếp theo, nếu môi trường vẫn nằm ở mức Nguy hiểm, điều kiện kiểm tra không thỏa mãn nên hệ thống không gửi thêm bất kỳ bản tin báo động nào, ngăn ngừa triệt để hiện tượng tràn ngập thông báo (Alarm Flooding).
+\end{tcolorbox}
+
+\newpage
+% =============================================================================
+% CÂU HỎI ÔN TẬP
+% =============================================================================
+\section{Trả Lời Chi Tiết Các Câu Hỏi Ôn Tập}
+
+\begin{tcolorbox}[colback=blue!3,colframe=blue!75!black,title=\textbf{Câu hỏi 1: Vì sao dashboard hoạt động được mà không cần Internet tại 192.168.4.1, trong khi việc tải dữ liệu lên cloud (Bài tập 5) không thể chạy ở chế độ AP?}]
+\textbf{Trả lời:}
+\begin{itemize}[leftmargin=*]
+    \item Khi hoạt động ở chế độ Access Point (SoftAP), bản thân vi điều khiển ESP32-S3 đóng vai trò là một điểm phát sóng Wi-Fi độc lập (Master AP). Nó tự quản lý ngăn xếp mạng cục bộ (Layer 2 \& Layer 3) và chạy một dịch vụ DHCP server nội bộ để cấp phát dải địa chỉ IP riêng (mặc định là subnet \texttt{192.168.4.0/24}), đồng thời mở một socket TCP lắng nghe các gói tin HTTP Request gửi tới cổng 80 tại địa chỉ IP tĩnh \texttt{192.168.4.1}.
+    \item Khi smartphone kết nối vào mạng Wi-Fi \texttt{"ESP32-TEAM01"}, liên kết vô tuyến ngang hàng trực tiếp được thiết lập giữa điện thoại và ESP32. Mọi gói tin HTTP (\texttt{GET /}, \texttt{GET /sensors}, \texttt{GET /toggle}) được trình duyệt gửi thẳng trực tiếp đến card mạng Wi-Fi của ESP32 qua môi trường mạng LAN cục bộ mà không cần đi qua cổng định tuyến (Default Gateway) hay máy chủ DNS công cộng. Do đó, dashboard web hoạt động hoàn toàn trơn tru trong môi trường offline mà không đòi hỏi bất kỳ kết nối Internet nào.
+    \item Ngược lại, việc tải dữ liệu lên đám mây CoreIOT ở Bài 5 đòi hỏi ESP32 phải thiết lập kết nối TCP socket (giao thức MQTT qua cổng 1883) đến một Cloud Server nằm ngoài mạng diện rộng toàn cầu (WAN) thông qua tên miền (vd: \texttt{app.coreiot.io}). Ở chế độ AP thuần túy, ESP32 không có đường uplink (không kết nối vào modem/router nhà mạng ISP), không có địa chỉ gateway để forward gói tin ra ngoài Internet và không có DNS Server để phân giải địa chỉ IP của Cloud. Do đó, tiến trình MQTT bắt buộc phải đợi ESP32 chuyển sang chế độ Station (STA), kết nối vào Router và nhận được semaphore "Internet sẵn sàng" thì mới có thể truyền dữ liệu lên CoreIOT.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.3cm}
+
+\begin{tcolorbox}[colback=blue!3,colframe=blue!75!black,title=\textbf{Câu hỏi 2: Sau khi nhấn Kết nối, vì sao điện thoại mất trang web? Bạn sẽ thấy gì trên trình duyệt nếu handleConnect() gọi connectToWiFi() trước server.send()?}]
+\textbf{Trả lời:}
+\begin{itemize}[leftmargin=*]
+    \item Khi người dùng nhấn nút "Kết nối" trên trang \texttt{/settings}, hàm \texttt{connectToWiFi()} ban đầu thực thi lệnh \texttt{WiFi.mode(WIFI\_STA)}. Lệnh này ngay lập tức tắt khối vô tuyến phát Access Point của ESP32 để chuyển hoàn toàn sang vai trò Client thu sóng. Kết quả là mạng Wi-Fi \texttt{"ESP32-TEAM01"} lập tức biến mất trong không gian. Smartphone của người dùng bị ngắt liên kết vật lý (Wi-Fi Layer 2 de-authentication) khỏi ESP32, dẫn đến việc mất kết nối mạng và trình duyệt không còn đường truyền dữ liệu đến máy chủ.
+    \item Nếu trong hàm \texttt{handleConnect()}, ta gọi \texttt{connectToWiFi()} TRƯỚC lệnh \texttt{server.send(200, "text/plain", "Connecting....")}, hiện tượng xảy ra sẽ là:
+    \begin{itemize}
+        \item Lệnh \texttt{WiFi.mode(WIFI\_STA)} bên trong \texttt{connectToWiFi()} sẽ lập tức ngắt AP và giải phóng toàn bộ socket mạng SoftAP trước khi ESP32 kịp tạo và truyền gói tin phản hồi HTTP Response (200 OK) về cho trình duyệt.
+        \item Trình duyệt trên điện thoại gửi yêu cầu HTTP GET \texttt{/connect} đi nhưng không nhận được bất kỳ byte dữ liệu phản hồi nào (TCP socket bị reset đột ngột hoặc timeout).
+        \item Khi đó, người dùng sẽ không nhìn thấy dòng chữ \texttt{"Connecting...."} trên màn hình, mà thay vào đó trình duyệt sẽ báo lỗi mạng: \textbf{"This site can't be reached" (ERR\_CONNECTION\_TIMED\_OUT)} hoặc \textbf{"ERR\_CONNECTION\_RESET / The server closed the connection without sending any data"}.
+    \end{itemize}
+\end{itemize}
+\end{tcolorbox}
+
+\newpage
+
+\begin{tcolorbox}[colback=blue!3,colframe=blue!75!black,title=\textbf{Câu hỏi 3: internet\_task chờ với portMAX\_DELAY. Nó dùng bao nhiêu CPU trong khi chờ, và vì sao?}]
+\textbf{Trả lời:}
+\begin{itemize}[leftmargin=*]
+    \item \texttt{internet\_task} tiêu thụ \textbf{xấp xỉ 0\% chu kỳ CPU (0\% CPU Utilization)} trong suốt thời gian chờ.
+    \item \textbf{Nguyên lý quản lý tác vụ trong FreeRTOS}:
+    \begin{itemize}
+        \item Khi một FreeRTOS task gọi hàm đồng bộ hóa \texttt{xSemaphoreTake(xBinarySemaphoreInternet, portMAX\_DELAY)} mà semaphore đang rỗng (count = 0), bộ lập lịch (Scheduler) sẽ lập tức can thiệp và chuyển trạng thái của task đó từ \textbf{RUNNING} sang \textbf{BLOCKED} (Treo / Ngủ).
+        \item Bộ lập lịch loại bỏ tác vụ này khỏi danh sách sẵn sàng thực thi (Ready List) và đưa nó vào danh sách chờ sự kiện (Event List của semaphore).
+        \item Trong suốt thời gian nằm ở trạng thái BLOCKED, tác vụ hoàn toàn không được phân bổ bất kỳ khe thời gian (time-slice) nào của CPU. CPU được giải phóng 100\% để phục vụ các tác vụ khác (như \texttt{main\_server\_task} xử lý Web Server hoặc \texttt{sensor\_task} đọc cảm biến). Khi không có tác vụ ứng dụng nào cần xử lý, CPU chuyển sang chạy \texttt{IDLE Task} và có thể kích hoạt các chế độ tiết kiệm năng lượng (Automatic Light Sleep / Clock Gating).
+        \item Chỉ khi \texttt{main\_server\_task} gọi \texttt{xSemaphoreGive(xBinarySemaphoreInternet)}, bộ lập lịch mới đưa \texttt{internet\_task} trở lại Ready List để chuyển sang Running.
+    \end{itemize}
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.3cm}
+
+\begin{tcolorbox}[colback=blue!3,colframe=blue!75!black,title=\textbf{Câu hỏi 4: Hai tác vụ cùng gọi xSemaphoreTake() trên xBinarySemaphoreInternet. Sau một lần kết nối thành công, có bao nhiêu tác vụ được đánh thức? Bạn sẽ dùng cơ chế nào thay thế nếu cả hai đều phải được thông báo?}]
+\textbf{Trả lời:}
+\begin{itemize}[leftmargin=*]
+    \item Sau một lần kết nối thành công, \texttt{main\_server\_task} chỉ gọi \texttt{xSemaphoreGive()} một lần. Khi đó, \textbf{CHỈ CÓ DUY NHẤT 1 TÁC VỤ được đánh thức (1 task)}.
+    \item \textbf{Nguyên lý FreeRTOS}: Binary Semaphore là cấu trúc dữ liệu nhị phân với dung lượng tối đa chỉ 1 token (giá trị 0 hoặc 1). Khi \texttt{xSemaphoreGive()} được gọi, token được đưa vào semaphore, FreeRTOS Scheduler sẽ đánh thức tác vụ có \textbf{ĐỘ ƯU TIÊN (Priority) CAO NHẤT} đang bị chặn trong hàng đợi Event List của semaphore đó. Nếu hai tác vụ có cùng độ ưu tiên, tác vụ nào gọi \texttt{xSemaphoreTake()} trước (theo thứ tự FIFO) sẽ được chọn. Ngay khi tác vụ được đánh thức chạy, nó sẽ "lấy mất" token duy nhất đó, đưa giá trị semaphore về 0. Tác vụ thứ hai tiếp tục bị kẹt lại trong trạng thái BLOCKED.
+    \item \textbf{Các cơ chế thay thế để thông báo đồng thời cho cả hai tác vụ (Broadcast 1-to-many)}:
+    \begin{enumerate}
+        \item \textbf{Event Groups (\texttt{xEventGroupSetBits} / \texttt{xEventGroupWaitBits}) - Giải pháp tối ưu nhất}: Cho phép một tác vụ thiết lập một bit cờ sự kiện (ví dụ Bit 0 biểu thị \texttt{INTERNET\_READY}). Tất cả các tác vụ đang chờ trên bit này với cờ \texttt{xClearOnExit = pdFALSE} đều được bộ lập lịch đánh thức đồng thời.
+        \item \textbf{Counting Semaphore}: Khởi tạo với dung lượng $\ge 2$. Tác vụ server sẽ gọi \texttt{xSemaphoreGive()} hai lần liên tiếp để cấp đủ 2 token cho cả 2 tác vụ đang chờ.
+        \item \textbf{Direct Task Notifications}: Tác vụ server lưu giữ task handle của cả 2 tác vụ và lần lượt gọi \texttt{xTaskNotifyGive(task1)} và \texttt{xTaskNotifyGive(task2)}.
+    \end{enumerate}
+\end{itemize}
+\end{tcolorbox}
+
+\newpage
+
+\begin{tcolorbox}[colback=blue!3,colframe=blue!75!black,title=\textbf{Câu hỏi 5: Vì sao millis() - connect\_start\_ms > 10000 vẫn đúng khi millis() bị tràn sau khoảng 49 ngày?}]
+\textbf{Trả lời:}
+\begin{itemize}[leftmargin=*]
+    \item Trong môi trường C/C++ trên nền tảng vi điều khiển ESP32-S3, cả giá trị trả về của hàm \texttt{millis()} và biến lưu mốc thời gian \texttt{connect\_start\_ms} đều được định nghĩa với kiểu dữ liệu số nguyên không dấu 32-bit (\texttt{uint32\_t}). Dải giá trị của kiểu này là từ 0 đến $2^{32} - 1$ (tức 0 đến 4.294.967.295 ms, tương đương khoảng $49,71$ ngày).
+    \item Theo chuẩn ngôn ngữ C/C++ (C++ Standard Draft Section on Unsigned Arithmetic), các phép toán số học đối với số nguyên không dấu được bảo đảm thực hiện theo quy tắc modulo $2^{32}$ (số học bù hai không gây ra hiện tượng undefined behavior).
+    \item Khi \texttt{millis()} vượt qua ngưỡng cực đại và bị tràn (rollover) trở về 0, phép trừ không dấu \texttt{(millis() - connect\_start\_ms)} vẫn cho ra kết quả delta thời gian hoàn toàn chính xác.
+    \item \textbf{Chứng minh toán học}:
+    \begin{itemize}
+        \item Giả sử \texttt{connect\_start\_ms} được ghi lại ngay trước thời điểm tràn: $connect\_start\_ms = 4.294.967.290$ (tức $2^{32} - 6$).
+        \item Sau 10 giây ($10.000\text{ ms}$), biến đếm của hệ thống tăng lên, vượt qua mốc tràn 0 và đạt giá trị: $millis() = 9.994$.
+        \item Khi thực hiện phép trừ số học không dấu:
+        \begin{align*}
+        \text{diff} &= (\text{uint32\_t})(millis() - connect\_start\_ms) \\
+                    &= (9.994 - (2^{32} - 6)) \pmod{2^{32}} \\
+                    &= 9.994 + 6 = 10.000\text{ ms}
+        \end{align*}
+        \item Giá trị diff thu được là $10.000\text{ ms}$, chính xác tuyệt đối với khoảng thời gian thực tế đã trôi qua!
+    \end{itemize}
+    \item Do đó, phép so sánh \texttt{(millis() - connect\_start\_ms > 10000)} luôn hoạt động ổn định và hoàn toàn miễn nhiễm với sự cố tràn số \texttt{millis()}.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.5cm}
+\section{Khai Báo Sử Dụng Công Cụ AI và Bảng Kiểm Tra Hoàn Thành}
+
+\subsection{Khai báo sử dụng AI (AI Usage Disclosure)}
+Trong bài thực hành số 4, các công cụ trợ lý trí tuệ nhân tạo (AI Assistant: Claude 3.5 Sonnet / Antigravity Agent) đã được sinh viên khai thác có trách nhiệm nhằm hỗ trợ thiết kế kiến trúc phần mềm cho hai bài tập mở (Bài 4 và Bài 5):
+\begin{enumerate}
+    \item \textbf{Bài tập 4}: Khởi tạo ý tưởng sử dụng chế độ kép \texttt{WIFI\_AP\_STA} để giữ Access Point hoạt động, đồng thời xây dựng mô hình Web Polling bất đồng bộ qua endpoint \texttt{/status}. Sinh viên đã phát hiện và khắc phục lỗi nghẽn Web Server (blocking wait) trong đề xuất sơ khởi của AI.
+    \item \textbf{Bài tập 5}: Đề xuất mô hình Exponential Back-off khi mất kết nối MQTT Broker và thiết kế cơ chế chốt trạng thái \textbf{State Change Latch} để ngăn chặn spam tin nhắn báo động. Toàn bộ mã nguồn đã được sinh viên rà soát, tái cấu trúc và xác thực thực nghiệm thành công trên Kit YoloUNO.
+\end{enumerate}
+
+\subsection{Danh mục kiểm tra trước khi nộp bài (Submission Checklist)}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|>{\centering\arraybackslash}m{1.5cm}|m{10.5cm}|>{\centering\arraybackslash}X|}
+\hline
+\rowcolor{codeframe!40}
+\textbf{Mục} & \textbf{Nội dung yêu cầu kiểm tra} & \textbf{Tình trạng} \\
+\hline
+$\square$ & Toàn bộ 4 thay đổi FIX và nhiệm vụ B6 trong \texttt{mainserver.cpp} hoàn tất & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Vượt qua 6 checkpoint thực nghiệm D1--D6 và nhánh lỗi timeout 10 giây & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Bộ lọc Moving Average 10 mẫu kèm Mutex bảo vệ hoạt động chính xác (Bài 1) & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Giao diện đổi màu, icon cảnh báo và nhãn trạng thái nhiệt độ trên Web (Bài 2) & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Tính toán mức độ ẩm có Hysteresis 1\% và chốt log Serial trên ESP32 (Bài 3) & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Giữ AP hoạt động và hiển thị trạng thái kết nối thời gian thực trên Web (Bài 4) & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Gửi Telemetry và Báo động khẩn cấp lên CoreIOT khi nhận Semaphore (Bài 5) & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Trả lời đầy đủ, chi tiết và chính xác 5 câu hỏi ôn tập lý thuyết & \textbf{ĐÃ XONG} \\
+\hline
+$\square$ & Project PlatformIO được biên dịch thành công 0 lỗi và xuất PDF báo cáo hoàn chỉnh & \textbf{ĐÃ XONG} \\
+\hline
+\end{tabularx}
+\caption{Bảng kiểm tra danh mục hoàn thành trước khi xuất báo cáo}
+\label{tab:checklist}
+\end{table}

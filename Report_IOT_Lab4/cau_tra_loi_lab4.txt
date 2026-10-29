@@ -1,0 +1,133 @@
+========================================================================================
+BỘ CÂU HỎI VÀ CÂU TRẢ LỜI CHI TIẾT LAB 4: ESP32-S3 WEB SERVER VÀ DASHBOARD
+Môn học: Phát triển Ứng dụng Internet of Things (CO3038) - ĐH Bách Khoa ĐHQG-HCM
+Sinh viên thực hiện: Phạm Công Võ - MSSV: 2313946
+Lớp: L01 - HK261 | GVHD: Thầy Phan Văn Sỹ
+========================================================================================
+
+PHẦN 1: CÂU HỎI ÔN TẬP CHÍNH THỨC (Review Questions - 1.0 Điểm)
+----------------------------------------------------------------------------------------
+
+CÂU 1: Vì sao dashboard hoạt động được mà không cần Internet tại 192.168.4.1, trong khi việc tải dữ liệu lên cloud (Bài tập 5) không thể chạy ở chế độ AP?
+
+Trả lời:
+- Khi hoạt động ở chế độ Access Point (SoftAP), bản thân vi điều khiển ESP32-S3 đóng vai trò là một điểm phát sóng Wi-Fi độc lập (Master AP). Nó tự quản lý ngăn xếp mạng cục bộ (Layer 2 & Layer 3) và chạy một dịch vụ DHCP server nội bộ để cấp phát dải địa chỉ IP riêng (mặc định là subnet 192.168.4.0/24), đồng thời mở một socket TCP lắng nghe các gói tin HTTP Request gửi tới cổng 80 tại địa chỉ IP tĩnh 192.168.4.1.
+- Khi smartphone kết nối vào mạng Wi-Fi "ESP32-TEAM01", liên kết vô tuyến ngang hàng trực tiếp được thiết lập giữa điện thoại và ESP32. Mọi gói tin HTTP (GET /, GET /sensors, GET /toggle) được trình duyệt gửi thẳng trực tiếp đến card mạng Wi-Fi của ESP32 qua môi trường mạng LAN cục bộ mà không cần đi qua cổng định tuyến (Default Gateway) hay máy chủ DNS công cộng. Do đó, dashboard web hoạt động hoàn toàn trơn tru trong môi trường offline mà không đòi hỏi bất kỳ kết nối Internet nào.
+- Ngược lại, việc tải dữ liệu lên đám mây CoreIOT ở Bài 5 đòi hỏi ESP32 phải thiết lập kết nối TCP socket (giao thức MQTT qua cổng 1883) đến một Cloud Server nằm ngoài mạng diện rộng toàn cầu (WAN) thông qua tên miền (vd: app.coreiot.io). Ở chế độ AP thuần túy, ESP32 không có đường uplink (không kết nối vào modem/router nhà mạng ISP), không có địa chỉ gateway để forward gói tin ra ngoài Internet và không có DNS Server để phân giải địa chỉ IP của Cloud. Do đó, tiến trình MQTT bắt buộc phải đợi ESP32 chuyển sang chế độ Station (STA), kết nối vào Router và nhận được semaphore "Internet sẵn sàng" thì mới có thể truyền dữ liệu lên CoreIOT.
+
+----------------------------------------------------------------------------------------
+
+CÂU 2: Sau khi nhấn Kết nối, vì sao điện thoại mất trang web? Bạn sẽ thấy gì trên trình duyệt nếu handleConnect() gọi connectToWiFi() trước server.send()?
+
+Trả lời:
+- Khi người dùng nhấn nút "Kết nối" trên trang /settings, hàm connectToWiFi() ban đầu thực thi lệnh WiFi.mode(WIFI_STA). Lệnh này ngay lập tức tắt khối vô tuyến phát Access Point của ESP32 để chuyển hoàn toàn sang vai trò Client thu sóng. Kết quả là mạng Wi-Fi "ESP32-TEAM01" lập tức biến mất trong không gian. Smartphone của người dùng bị ngắt liên kết vật lý (Wi-Fi Layer 2 de-authentication) khỏi ESP32, dẫn đến việc mất kết nối mạng và trình duyệt không còn đường truyền dữ liệu đến máy chủ.
+- Nếu trong hàm handleConnect(), ta gọi connectToWiFi() TRƯỚC lệnh server.send(200, "text/plain", "Connecting...."), hiện tượng xảy ra sẽ là:
+  + Lệnh WiFi.mode(WIFI_STA) bên trong connectToWiFi() sẽ lập tức ngắt AP và giải phóng toàn bộ socket mạng SoftAP trước khi ESP32 kịp tạo và truyền gói tin phản hồi HTTP Response (200 OK) về cho trình duyệt.
+  + Trình duyệt trên điện thoại gửi yêu cầu HTTP GET /connect đi nhưng không nhận được bất kỳ byte dữ liệu phản hồi nào (TCP socket bị reset đột ngột hoặc timeout).
+  + Khi đó, người dùng sẽ không nhìn thấy dòng chữ "Connecting...." trên màn hình, mà thay vào đó trình duyệt sẽ báo lỗi mạng: "This site can't be reached" (ERR_CONNECTION_TIMED_OUT) hoặc "ERR_CONNECTION_RESET / The server closed the connection without sending any data".
+
+----------------------------------------------------------------------------------------
+
+CÂU 3: internet_task chờ với portMAX_DELAY. Nó dùng bao nhiêu CPU trong khi chờ, và vì sao?
+
+Trả lời:
+- internet_task tiêu thụ xấp xỉ 0% chu kỳ CPU (0% CPU Utilization) trong suốt thời gian chờ.
+- Nguyên lý quản lý tác vụ trong FreeRTOS:
+  + Khi một FreeRTOS task gọi hàm đồng bộ hóa xSemaphoreTake(xBinarySemaphoreInternet, portMAX_DELAY) mà semaphore đang rỗng (count = 0), bộ lập lịch (Scheduler) sẽ lập tức can thiệp và chuyển trạng thái của task đó từ RUNNING sang BLOCKED (Treo / Ngủ).
+  + Bộ lập lịch loại bỏ tác vụ này khỏi danh sách sẵn sàng thực thi (Ready List) và đưa nó vào danh sách chờ sự kiện (Event List của semaphore).
+  + Trong suốt thời gian nằm ở trạng thái BLOCKED, tác vụ hoàn toàn không được phân bổ bất kỳ khe thời gian (time-slice) nào của CPU. CPU được giải phóng 100% để phục vụ các tác vụ khác (như main_server_task xử lý Web Server hoặc sensor_task đọc cảm biến). Khi không có tác vụ ứng dụng nào cần xử lý, CPU chuyển sang chạy IDLE Task và có thể kích hoạt các chế độ tiết kiệm năng lượng (Automatic Light Sleep / Clock Gating).
+  + Chỉ khi main_server_task gọi xSemaphoreGive(xBinarySemaphoreInternet), bộ lập lịch mới đưa internet_task trở lại Ready List để chuyển sang Running.
+
+----------------------------------------------------------------------------------------
+
+CÂU 4: Hai tác vụ cùng gọi xSemaphoreTake() trên xBinarySemaphoreInternet. Sau một lần kết nối thành công, có bao nhiêu tác vụ được đánh thức? Bạn sẽ dùng cơ chế nào thay thế nếu cả hai đều phải được thông báo?
+
+Trả lời:
+- Sau một lần kết nối thành công, main_server_task chỉ gọi xSemaphoreGive() một lần. Khi đó, CHỈ CÓ DUY NHẤT 1 TÁC VỤ được đánh thức (1 task).
+- Nguyên lý FreeRTOS: Binary Semaphore là cấu trúc dữ liệu nhị phân với dung lượng tối đa chỉ 1 token (giá trị 0 hoặc 1). Khi xSemaphoreGive() được gọi, token được đưa vào semaphore, FreeRTOS Scheduler sẽ đánh thức tác vụ có ĐỘ ƯU TIÊN (Priority) CAO NHẤT đang bị chặn trong hàng đợi Event List của semaphore đó. Nếu hai tác vụ có cùng độ ưu tiên, tác vụ nào gọi xSemaphoreTake() trước (theo thứ tự FIFO) sẽ được chọn. Ngay khi tác vụ được đánh thức chạy, nó sẽ "lấy mất" token duy nhất đó, đưa giá trị semaphore về 0. Tác vụ thứ hai tiếp tục bị kẹt lại trong trạng thái BLOCKED.
+- Các cơ chế thay thế để thông báo đồng thời cho cả hai tác vụ (Broadcast 1-to-many):
+  1. Event Groups (xEventGroupSetBits / xEventGroupWaitBits) - Giải pháp tối ưu nhất: Cho phép một tác vụ thiết lập một bit cờ sự kiện (ví dụ Bit 0 biểu thị INTERNET_READY). Tất cả các tác vụ đang chờ trên bit này với cờ xClearOnExit = pdFALSE đều được bộ lập lịch đánh thức đồng thời.
+  2. Counting Semaphore: Khởi tạo với dung lượng >= 2. Tác vụ server sẽ gọi xSemaphoreGive() hai lần liên tiếp để cấp đủ 2 token cho cả 2 tác vụ đang chờ.
+  3. Direct Task Notifications: Tác vụ server lưu giữ task handle của cả 2 tác vụ và lần lượt gọi xTaskNotifyGive(task1_handle) và xTaskNotifyGive(task2_handle).
+
+----------------------------------------------------------------------------------------
+
+CÂU 5: Vì sao millis() - connect_start_ms > 10000 vẫn đúng khi millis() bị tràn sau khoảng 49 ngày?
+
+Trả lời:
+- Trong môi trường C/C++ trên nền tảng vi điều khiển ESP32-S3, cả giá trị trả về của hàm millis() và biến lưu mốc thời gian connect_start_ms đều được định nghĩa với kiểu dữ liệu số nguyên không dấu 32-bit (uint32_t). Dải giá trị của kiểu này là từ 0 đến 2^32 - 1 (tức 0 đến 4.294.967.295 ms, tương đương khoảng 49,71 ngày).
+- Theo chuẩn ngôn ngữ C/C++ (C++ Standard Draft Section on Unsigned Arithmetic), các phép toán số học đối với số nguyên không dấu được bảo đảm thực hiện theo quy tắc modulo 2^32 (số học bù hai không gây ra hiện tượng undefined behavior).
+- Khi millis() vượt qua ngưỡng cực đại và bị tràn (rollover) trở về 0, phép trừ không dấu (millis() - connect_start_ms) vẫn cho ra kết quả delta thời gian hoàn toàn chính xác.
+- Chứng minh toán học:
+  + Giả sử connect_start_ms được ghi lại ngay trước thời điểm tràn: connect_start_ms = 4.294.967.290 (tức 2^32 - 6).
+  + Sau 10 giây (10.000 ms), biến đếm của hệ thống tăng lên, vượt qua mốc tràn 0 và đạt giá trị: millis() = 9.994.
+  + Khi biểu thức thực hiện:
+    diff = (uint32_t)(millis() - connect_start_ms)
+         = (uint32_t)(9.994 - 4.294.967.290)
+         = (9.994 - (2^32 - 6)) mod 2^32
+         = 9.994 + 6 = 10.000 ms.
+  + Giá trị diff thu được là 10.000 ms, chính xác tuyệt đối với khoảng thời gian thực tế đã trôi qua!
+- Do đó, phép so sánh (millis() - connect_start_ms > 10000) luôn hoạt động ổn định và hoàn toàn miễn nhiễm với sự cố tràn số millis().
+
+
+========================================================================================
+PHẦN 2: CÂU TRẢ LỜI CHO CÁC BÀI TẬP THỰC HÀNH 1, 2, 3, 4, 5
+----------------------------------------------------------------------------------------
+
+BÀI TẬP 1:
+- Câu hỏi 1: Vì sao cần mutex ở đây, và nếu không có nó thì trang web có thể hiển thị gì?
+  + Trả lời: Trong kiến trúc FreeRTOS đa luồng chạy trên ESP32-S3 (Dual-Core), sensor_task (tác vụ sản xuất - Writer) và main_server_task (tác vụ tiêu thụ - Reader) hoạt động độc lập và bất đồng bộ dưới cơ chế định thời đa nhiệm phân chia thời gian (Preemptive Multitasking). Việc cập nhật vào mảng mảng số thực temp_buf, hum_buf cũng như cập nhật hai biến chỉ số buf_idx, buf_count là chuỗi nhiều lệnh máy (không phải là thao tác nguyên tử - non-atomic operation).
+  + Nếu không sử dụng Mutex (xSensorMutex), một ngắt chuyển ngữ cảnh (Context Switch) có thể xảy ra ngay giữa chừng khi sensor_task đang ghi dở mẫu mới. Khi đó, main_server_task đọc dữ liệu sẽ gặp hiện tượng Torn Read (đọc phải dữ liệu rác, một nửa mẫu cũ và một nửa mẫu mới), hoặc đọc chỉ số vòng lặp sai lệch dẫn đến đọc vượt biên vùng nhớ hoặc tính toán sai hoàn toàn giá trị trung bình hiển thị trên trang web.
+
+- Câu hỏi 2: Vì sao getAverage() phải xử lý trường hợp buf_count == 0?
+  + Trả lời: Tại thời điểm hệ thống vừa khởi động (Boot-up), khi Web Server đã bắt đầu lắng nghe nhưng sensor_task chưa kịp đưa bất kỳ mẫu đo nào vào bộ đệm, buf_count sẽ bằng 0. Nếu không kiểm tra điều kiện (buf_count == 0), phép tính chia lấy trung bình (sum / buf_count) sẽ thực hiện phép chia cho 0 (Division by Zero). Trong chuẩn IEEE 754 của số thực dấu phẩy động, phép tính này sẽ sinh ra giá trị đặc biệt NaN (Not a Number) hoặc Inf (Infinity). Khi chuỗi JSON được sinh ra chứa giá trị "NaN", hàm JSON.parse() trên trình duyệt sẽ báo lỗi phân tích cú pháp nghiêm trọng, làm sập hoàn toàn giao diện JavaScript của Dashboard.
+
+----------------------------------------------------------------------------------------
+
+BÀI TẬP 2:
+- Câu hỏi: Việc xác định mức ngưỡng an toàn trên trình duyệt thay vì trên ESP32 có những ưu điểm và nhược điểm gì?
+  + Ưu điểm:
+    1. Tiết kiệm tài nguyên vi điều khiển: Giảm tải chu kỳ xử lý tính toán của CPU ESP32, tiết kiệm bộ nhớ RAM và Flash của vi điều khiển.
+    2. Tối ưu băng thông mạng: Gói tin JSON gửi qua HTTP chỉ cần mang giá trị số thực thô gọn nhẹ (vd: {"temp": 29.5}), không cần đính kèm các chuỗi định dạng văn bản hay mã màu.
+    3. Linh hoạt trong tùy biến giao diện: Cho phép nhà phát triển thay đổi ngưỡng hiển thị, bảng màu CSS, chế độ Dark/Light Mode, hoặc đa ngôn ngữ (Việt/Anh) linh hoạt ngay trên frontend mà không cần phải biên dịch lại và nạp lại firmware cho phần cứng.
+  + Nhược điểm:
+    1. Thiếu tính đồng bộ và phân tán logic: Nếu hệ thống có nhiều client khác nhau cùng truy cập (Web Dashboard, Mobile App, Màn hình LCD tại chỗ, Còi báo động), mỗi client phải tự lập trình lại logic phân loại ngưỡng này, dễ dẫn đến hiện tượng bất nhất thông tin cảnh báo.
+    2. Không tự kích hoạt được hành động biên: ESP32 không thể tự động ra quyết định kích hoạt relay ngắt thiết bị khẩn cấp hay hú còi khi nhiệt độ vượt ngưỡng nếu logic chỉ nằm trên trình duyệt của người dùng.
+    3. Phụ thuộc vào client: Nếu người dùng tắt trình duyệt, mất kết nối điện thoại hoặc JavaScript trên máy khách bị crash, toàn bộ hệ thống cảnh báo sẽ bị ngưng trệ.
+
+----------------------------------------------------------------------------------------
+
+BÀI TẬP 3:
+- Câu hỏi 1: Vì sao mức bị nhấp nháy (flicker) khi không có hysteresis?
+  + Trả lời: Cảm biến phần cứng DHT20 luôn có sai số nội tại ngẫu nhiên (dao động khoảng ±0.5°C và ±3% RH) do nhiễu môi trường, dòng khí đối lưu và nhiễu lượng tử hóa ADC. Khi độ ẩm thực tế tiệm cận sát ranh giới ngưỡng (ví dụ dao động quanh mốc 60.0% RH, lần lượt đọc được: 59.9% -> 60.1% -> 59.9% -> 60.2%), nếu không có vùng trễ (hysteresis), trạng thái cảnh báo sẽ bị lật qua lật lại liên tục giữa "Bình thường" và "Cảnh báo (Ẩm)". Điều này gây ra hiện tượng màn hình web nhấp nháy màu sắc liên tục, còi báo động bật tắt dồn dập (relay chattering) và sinh ra một cơn bão thông báo rác (Alarm Storm) trên hệ thống giám sát.
+
+- Câu hỏi 2: Bạn sẽ chọn thiết kế nào (Bài tập 2 hay 3) nếu cả ba trang web khác nhau và một MQTT client đều cần biết mức? Vì sao?
+  + Trả lời: Bắt buộc phải chọn THIẾT KẾ CỦA BÀI TẬP 3 (Tính toán phân loại mức tập trung ngay trên ESP32).
+  + Lý do:
+    1. Đảm bảo nguyên lý Single Source of Truth (Điểm cốt lõi duy nhất): Logic phân loại ngưỡng an toàn được quy định tại một nơi duy nhất trên vi điều khiển tầng biên. Cả 3 trang web và MQTT Client khi nhận dữ liệu đều nhận cùng một trường giá trị chuẩn mực "hum_level", ngăn chặn hoàn toàn nguy cơ hiển thị xung đột hoặc sai lệch giữa các giao diện.
+    2. Tối ưu cho thiết bị nhúng và mạng IoT: MQTT Client chỉ việc lấy trực tiếp trường "hum_level" để gửi lên CoreIOT Cloud hoặc kích hoạt cảnh báo, không cần phải tốn thêm bộ nhớ và thư viện toán học để tự tính toán lại.
+    3. Tính tự chủ biên (Edge Autonomy): ESP32 có thể tự động nhận biết mức "danger" để chủ động gửi gói tin báo động khẩn cấp lên Cloud ngay lập tức mà không cần phụ thuộc vào việc có client nào đang mở web hay không.
+
+----------------------------------------------------------------------------------------
+
+BÀI TẬP 4:
+- Tóm tắt giải pháp giữ AP hoạt động trong khi kết nối (Dual AP+STA):
+  + Thay vì gọi WiFi.mode(WIFI_STA), ta sử dụng WiFi.mode(WIFI_AP_STA). Chế độ này cho phép ESP32-S3 vừa duy trì trạm phát SoftAP tại 192.168.4.1 để tiếp tục phục vụ Web Server, vừa kích hoạt giao tiếp Station dò sóng và bắt tay xác thực với Router Wi-Fi.
+  + Handler /settings được nâng cấp: khi người dùng nhấn "Kết nối", trình duyệt gửi request /connect và khởi chạy bộ định thời JavaScript gửi yêu cầu hỏi vòng (polling) tới endpoint /status mỗi 1 giây.
+  + Endpoint /status trả về trạng thái thời gian thực: {"state": "CONNECTING" | "CONNECTED" | "FAILED", "ip": "..."}.
+  + Khi kết nối thành công: Trang web hiển thị ngay lập tức thông báo "Kết nối thành công! IP mới: 192.168.x.y" kèm liên kết để người dùng tiện chuyển mạng.
+  + Khi sai mật khẩu hoặc hết 10 giây timeout: Trang web hiển thị thông báo lỗi rõ ràng và ESP32 vẫn giữ nguyên Access Point để người dùng chỉnh sửa lại mà không bị mất dấu thiết bị.
+
+----------------------------------------------------------------------------------------
+
+BÀI TẬP 5:
+- Tóm tắt giải pháp đẩy dữ liệu và cảnh báo lên CoreIOT qua MQTT:
+  + internet_task là tác vụ duy nhất sở hữu PubSubClient nhằm tuân thủ nguyên lý phân tách trách nhiệm (Single Responsibility) và tránh tranh chấp tài nguyên mạng TCP Socket giữa nhiều tác vụ.
+  + internet_task chờ trên binary semaphore xBinarySemaphoreInternet (portMAX_DELAY). Khi main_server_task hoàn tất kết nối Station, nó give semaphore để đánh thức internet_task.
+  + Đẩy Telemetry định kỳ mỗi 10 giây với chuỗi JSON chứa giá trị trung bình trượt 10 mẫu và các mức phân loại: {"temperature":29.50,"humidity":62.00,"temp_level":"normal","hum_level":"humid"}.
+  + Cơ chế chống spam cảnh báo (State Change Latch): Khai báo cờ trạng thái prev_danger = false. Khi nhiệt độ hoặc độ ẩm vượt ngưỡng vào mức "danger", hệ thống kiểm tra điều kiện (is_danger && !prev_danger). Chỉ khi phát hiện sườn lên (Rising Edge - chuyển từ an toàn sang nguy hiểm), gói tin Alarm mới được gửi đi đúng 1 lần duy nhất, tránh việc mỗi 10 giây lại gửi một tin nhắn rác lên broker.
+  + Quản lý vòng đời khi nhấn nút BOOT: Khi người dùng nhấn nút BOOT (GPIO 0), main_server_task đặt isWifiConnected = false và đưa board về chế độ AP. internet_task lập tức phát hiện cờ mạng ngắt, thực hiện đóng kết nối MQTT gọn gàng (mqttClient.disconnect()), giải phóng tài nguyên và quay trở lại chờ ở đầu vòng lặp trên semaphore xBinarySemaphoreInternet.
+
+========================================================================================
+HOÀN TẤT BỘ CÂU TRẢ LỜI CHO TOÀN BỘ LAB 4
+========================================================================================
