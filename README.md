@@ -1,58 +1,95 @@
-# LAB 1: NỀN TẢNG IOT CLOUD VÀ GIAO THỨC MQTT VỚI COREIOT
+# ☁️ LAB 1: NỀN TẢNG IOT CLOUD VÀ GIAO THỨC MQTT VỚI COREIOT
+### Quản lý thiết bị, Telemetry Streaming & Điều khiển hai chiều qua RPC
 
-Khoa Khoa học và Kỹ thuật Máy tính - Trường Đại học Bách Khoa, ĐHQG-HCM  
-Môn học: Internet vạn vật (CO3061 / CO3062)  
-Nhánh Git: `lab1_coreiot` (hoặc `lab1`)  
-Nền tảng: CoreIOT Cloud Platform (phát triển trên nền ThingsBoard)  
-Giao thức truyền thông: MQTT (Message Queuing Telemetry Transport)  
-
----
-
-## 1. Mục tiêu thí nghiệm
-
-1. Nắm vững kiến trúc 3 tầng tiêu chuẩn của hệ thống Internet vạn vật:
-   - **Tầng Thu nhận (Perception Layer):** Thiết bị biên thu thập tín hiệu từ cảm biến nhiệt độ, độ ẩm và ánh sáng.
-   - **Tầng Mạng (Network Layer):** Giao thức mạng MQTT hoạt động trên nền TCP/IP, mô hình Publish - Subscribe nhẹ, tiết kiệm băng thông.
-   - **Tầng Ứng dụng (Application Layer):** Máy chủ đám mây CoreIOT tiếp nhận, lưu trữ dữ liệu chuỗi thời gian (Time-series data) và trực quan hóa trên Dashboard.
-2. Thực hành xác thực thiết bị bằng Access Token bảo mật.
-3. Nắm vững chu kỳ và định dạng gói tin Telemetry (JSON Payload).
-4. Thiết lập cơ chế gọi thủ tục từ xa hai chiều (Bidirectional Remote Procedure Call - RPC) để điều khiển cơ cấu chấp hành từ Dashboard.
-5. Quản lý phân quyền người dùng (Customer Assignment) và xuất bản giao diện Dashboard công khai (Public URL).
+> **Trường Đại học Bách Khoa - ĐHQG-HCM**  
+> **Khoa Khoa học và Kỹ thuật Máy tính**  
+> **Môn học:** Internet vạn vật (CO3061 / CO3062)  
+> **Sinh viên thực hiện:** Võ Phạm (MSSV: 2313946)  
+> **Nhánh Git:** `lab1_coreiot` | **Nền tảng:** CoreIOT Cloud Platform (ThingsBoard)
 
 ---
 
-## 2. Thông số máy chủ và Giao thức MQTT
+## 📖 Mục lục
+- [1. Giới thiệu & Mục tiêu](#1-giới-thiệu--mục-tiêu)
+- [2. Cấu trúc thư mục dự án](#2-cấu-trúc-thư-mục-dự-án)
+- [3. Thông số máy chủ & Giao thức MQTT](#3-thông-số-máy-chủ--giao-thức-mqtt)
+- [4. Nội dung các bài thực hành](#4-nội-dung-các-bài-thực-hành)
+  - [Bài 1: Quản lý thiết bị & Khởi tạo Access Token](#bài-1-quản-lý-thiết-bị--khởi-tạo-access-token)
+  - [Bài 2: Gửi dữ liệu Telemetry Streaming](#bài-2-gửi-dữ-liệu-telemetry-streaming)
+  - [Bài 3: Xây dựng Dashboard giám sát trực quan](#bài-3-xây-dựng-dashboard-giám-sát-trực-quan)
+  - [Bài 4: Điều khiển từ xa bằng cơ chế Two-Way RPC](#bài-4-điều-khiển-từ-xa-bằng-cơ-chế-two-way-rpc)
+  - [Bài 5: Xuất bản và chia sẻ Dashboard công khai](#bài-5-xuất-bản-và-chia-sẻ-dashboard-công-khai)
+- [5. Hướng dẫn cài đặt & Khởi chạy](#5-hướng-dẫn-cài-đặt--khởi-chạy)
+- [6. Quy tắc kỹ thuật & Lưu ý quan trọng](#6-quy-tắc-kỹ-thuật--lưu-ý-quan-trọng)
 
-Hệ thống kết nối trực tiếp tới máy chủ Cloud Broker tiêu chuẩn của khóa học:
+---
 
-| Thông số | Giá trị cấu hình | Giải thích kỹ thuật |
+## 🎯 1. Giới thiệu & Mục tiêu
+
+Bài thực hành Lab 1 trang bị kiến thức nền tảng về kiến trúc hệ thống IoT chuẩn công nghiệp và cách kết nối thiết bị biên (*Edge Device*) tới đám mây thông qua giao thức **MQTT**:
+
+1. **Kiến trúc 3 tầng IoT tiêu chuẩn:**
+   - **Tầng Thu nhận (Perception Layer):** Thiết bị biên thu thập và mô phỏng số liệu cảm biến (Nhiệt độ, Độ ẩm, Cường độ ánh sáng).
+   - **Tầng Mạng (Network Layer):** Giao thức truyền thông MQTT trên nền TCP/IP, kiến trúc Publish - Subscribe nhẹ, tiết kiệm tài nguyên.
+   - **Tầng Ứng dụng (Application Layer):** Đám mây CoreIOT (nền tảng ThingsBoard) thu thập, lưu trữ dữ liệu chuỗi thời gian (*Time-series*) và trực quan hóa.
+2. **Cơ chế xác thực an toàn:** Sử dụng Device Access Token độc bản để định danh thiết bị.
+3. **Truyền nhận dữ liệu thời gian thực:** Định dạng gói tin Telemetry dạng JSON Payload với chu kỳ cố định 3 giây.
+4. **Điều khiển hai chiều từ xa (Bidirectional RPC):** Nhận lệnh điều khiển trực tiếp từ Web Dashboard xuống thiết bị và phản hồi trạng thái xác nhận.
+5. **Phân quyền và chia sẻ:** Quản lý nhóm thiết bị (*Device Groups*), cấp quyền khách hàng (*Customer Assignment*) và tạo liên kết truy cập công khai (*Public Dashboard*).
+
+---
+
+## 📁 2. Cấu trúc thư mục dự án
+
+```text
+Report_IOT_Lab1/
+├── lab1_device.py                      # Mã nguồn Python client giả lập thiết bị IoT
+├── LAB1_2313946.pdf                    # Báo cáo thí nghiệm hoàn chỉnh (PDF)
+├── LAB1_CoreIOT_Exercises_Report_VI.docx # Báo cáo thí nghiệm định dạng Word
+├── Report_IOT_Lab1/                    # Mã nguồn LaTeX bài báo cáo
+│   ├── main.tex                        # File LaTeX chính
+│   ├── bkthesis.sty                    # Template định dạng luận văn ĐHBK
+│   ├── content/exercises.tex           # Nội dung giải thích từng bài tập
+│   └── image/                          # Hình ảnh minh họa kết quả thực nghiệm
+└── README.md                           # Tài liệu hướng dẫn kỹ thuật Lab 1
+```
+
+---
+
+## 🌐 3. Thông số máy chủ & Giao thức MQTT
+
+Hệ thống kết nối trực tiếp tới máy chủ Cloud Broker CoreIOT:
+
+| Thông số cấu hình | Giá trị | Giải thích kỹ thuật |
 | :--- | :--- | :--- |
-| MQTT Broker Host | `app.coreiot.io` | Địa chỉ máy chủ Cloud CoreIOT |
-| Cổng TCP tiêu chuẩn | `1883` | Cổng truyền thông MQTT Plaintext |
-| Thông tin xác thực | Device Access Token | Token do người dùng tạo (Tối thiểu 12 ký tự) |
-| Topic gửi Telemetry | `v1/devices/me/telemetry` | Publish dữ liệu cảm biến lên máy chủ |
-| Topic đăng ký nhận RPC | `v1/devices/me/rpc/request/+` | Subscribe để nhận yêu cầu điều khiển từ Dashboard |
-| Topic phản hồi kết quả RPC | `v1/devices/me/rpc/response/{id}` | Publish kết quả phản hồi trạng thái thiết bị về Dashboard |
+| **MQTT Broker Host** | `app.coreiot.io` | Địa chỉ máy chủ Cloud CoreIOT |
+| **Cổng kết nối (Port)** | `1883` | Cổng TCP truyền thông tiêu chuẩn (Plaintext) |
+| **Phương thức xác thực** | `Device Access Token` | Chuỗi ký tự bảo mật riêng cho thiết bị (≥ 12 ký tự) |
+| **Topic gửi Telemetry** | `v1/devices/me/telemetry` | Publish dữ liệu đo đạc lên máy chủ |
+| **Topic đăng ký nhận RPC** | `v1/devices/me/rpc/request/+` | Subscribe lắng nghe yêu cầu điều khiển từ Dashboard |
+| **Topic phản hồi kết quả RPC**| `v1/devices/me/rpc/response/{id}` | Publish kết quả thực thi lệnh về Dashboard |
 
 ---
 
-## 3. Danh mục các bài tập thực hành và Mô tả chi tiết
+## 📊 4. Nội dung các bài thực hành
 
-### Bài 1: Tạo thiết bị, thông tin xác thực và nhóm thiết bị (Device Management)
-- **Mục tiêu:** Làm quen với giao diện quản trị của hệ thống CoreIOT.
+### 🛠️ Bài 1: Quản lý thiết bị & Khởi tạo Access Token
+- **Mục tiêu:** Thiết lập cấu hình thiết bị ban đầu trên giao diện quản trị CoreIOT.
 - **Yêu cầu thực hiện:**
-  - Đăng nhập hệ thống, tạo một Device Profile phù hợp với yêu cầu quản lý.
-  - Khởi tạo một thiết bị mới với định dạng Access Token chứa mã số sinh viên (Ví dụ: `Vo_Lab1_Token_2313946`).
-  - Tạo Nhóm thiết bị (Device Group) và phân quyền thiết bị vào nhóm tương ứng.
-- **Kiểm chứng:** Trạng thái thiết bị trên giao diện CoreIOT chuyển sang Active khi có kết nối đầu tiên.
+  - Tạo **Device Profile** phù hợp với yêu cầu quản lý.
+  - Khởi tạo thiết bị với Access Token chứa MSSV: `Vo_Lab1_Token_2313946`.
+  - Gom nhóm vào **Device Group** và phân quyền truy cập.
+- **Kiểm chứng:** Trạng thái thiết bị chuyển sang **Active** ngay khi có kết nối MQTT đầu tiên.
 
-### Bài 2: Gửi Telemetry từ Python kèm cảm biến ánh sáng giả lập (Telemetry Streaming)
-- **Mục tiêu:** Xây dựng thiết bị biên giả lập gửi dữ liệu định kỳ lên Cloud qua MQTT.
+---
+
+### 📡 Bài 2: Gửi dữ liệu Telemetry Streaming
+- **Mục tiêu:** Xây dựng script Python gửi dữ liệu cảm biến định kỳ lên Cloud.
 - **Yêu cầu thực hiện:**
-  - Sử dụng thư viện `paho-mqtt` trên Python để thiết lập kết nối tới `app.coreiot.io:1883`.
-  - Thu thập hoặc giả lập 3 thông số môi trường: Nhiệt độ (°C), Độ ẩm (%), Cường độ ánh sáng (Lux).
-  - Chu kỳ truyền gửi dữ liệu (Publish Rate) bắt buộc là **3 giây/lần**.
-  - Định dạng gói tin JSON Payload:
+  - Sử dụng thư viện `paho-mqtt` để kết nối và truyền tin.
+  - Thu thập hoặc mô phỏng 3 thông số: Nhiệt độ (°C), Độ ẩm (%RH), Ánh sáng (Lux).
+  - Chu kỳ phát tin (*Publish Rate*): **3 giây / lần**.
+  - Cấu trúc gói tin JSON:
     ```json
     {
       "temperature": 28.5,
@@ -60,62 +97,68 @@ Hệ thống kết nối trực tiếp tới máy chủ Cloud Broker tiêu chu�
       "light": 420
     }
     ```
-- **Kiểm chứng:** Tab **Latest Telemetry** trên thiết bị tại CoreIOT cập nhật các giá trị đo mới sau mỗi 3 giây kèm theo dấu thời gian (Timestamp) chính xác.
+- **Kiểm chứng:** Tab **Latest Telemetry** trên giao diện CoreIOT cập nhật liên tục kèm nhãn thời gian (*Timestamp*) tương ứng.
 
-### Bài 3: Xây dựng Dashboard giám sát trực quan (Visualization Dashboard)
-- **Mục tiêu:** Thiết kế giao diện giám sát trực quan theo tiêu chuẩn công nghiệp.
-- **Yêu cầu thực hiện:**
-  - Tạo một Dashboard mới gắn với Alias của thiết bị đã khởi tạo ở Bài 1.
-  - Cấu hình các Widget trực quan hóa:
-    - **Digital Gauge Widget:** Hiển thị giá trị tức thời của Nhiệt độ và Độ ẩm với các dải màu cảnh báo trực quan (Xanh: Lý tưởng, Đỏ: Nguy hiểm).
-    - **Card Status Widget:** Hiển thị cường độ ánh sáng tức thời.
-    - **Time-series Line Chart:** Biểu đồ đường thể hiện sự biến thiên của các thông số theo thời gian thực, cho phép phóng to/thu nhỏ và chọn khoảng thời gian khảo sát.
-- **Kiểm chứng:** Dashboard tự động cập nhật động mỗi khi thiết bị biên gửi gói tin Telemetry lên.
+---
 
-### Bài 4: Điều khiển thiết bị từ xa bằng cơ chế RPC (Two-Way RPC Control)
-- **Mục tiêu:** Hiện thực cơ chế điều khiển hai chiều thời gian thực từ Web Dashboard về thiết bị chấp hành.
+### 📈 Bài 3: Xây dựng Dashboard giám sát trực quan
+- **Mục tiêu:** Thiết kế giao diện Dashboard theo chuẩn công nghiệp để giám sát số liệu trực quan.
+- **Các Widget cấu hình:**
+  - **Digital Gauge Widget:** Hiển thị tức thời Nhiệt độ và Độ ẩm kèm dải màu cảnh báo (Xanh: Bình thường, Đỏ: Cảnh báo).
+  - **Card Status Widget:** Thể hiện giá trị cường độ ánh sáng thời gian thực.
+  - **Time-series Line Chart:** Biểu đồ đường vẽ lịch sử biến thiên của dữ liệu theo thời gian thực, hỗ trợ phóng to/thu nhỏ và lọc khoảng thời gian.
+- **Kiểm chứng:** Dữ liệu trên Dashboard cập nhật tức thì theo chu kỳ truyền tin của client.
+
+---
+
+### 🔄 Bài 4: Điều khiển từ xa bằng cơ chế Two-Way RPC
+- **Mục tiêu:** Thiết lập cơ chế điều khiển hai chiều thời gian thực giữa Web Dashboard và thiết bị chấp hành.
 - **Yêu cầu thực hiện:**
-  - Bổ sung các Widget nút gạt (Control Switch) trên Dashboard để điều khiển 3 thiết bị ngoại vi: `LED`, `PUMP` (Máy bơm), `FAN` (Quạt gió).
-  - Thiết bị biên subscribe vào topic `v1/devices/me/rpc/request/+`.
-  - Khi người dùng thao tác trên Dashboard, máy chủ Cloud gửi yêu cầu RPC có cấu trúc:
+  - Cấu hình các công tắc gạt (*Control Switch*) điều khiển 3 ngoại vi: `LED`, `PUMP` (Bơm), `FAN` (Quạt).
+  - Client subscribe vào topic `v1/devices/me/rpc/request/+`.
+  - Nhận lệnh RPC dạng JSON từ máy chủ:
     ```json
     {
       "method": "setDeviceState",
       "params": { "device": "PUMP", "status": true }
     }
     ```
-  - Thiết bị trích xuất `request_id`, cập nhật trạng thái phần cứng và bắt buộc phải publish gói phản hồi về topic `v1/devices/me/rpc/response/{request_id}`:
+  - Xử lý bật/tắt thiết bị và phản hồi bắt buộc về `v1/devices/me/rpc/response/{request_id}`:
     ```json
     { "success": true, "device": "PUMP", "status": true }
     ```
-- **Kiểm chứng:** Nút gạt trên Dashboard không bị nhảy ngược về vị trí cũ (nhờ nhận được phản hồi hợp lệ), thiết bị chấp hành chuyển trạng thái tức thì.
-
-### Bài 5: Chia sẻ Dashboard công khai và quản lý phân quyền (Public Dashboard Access)
-- **Mục tiêu:** Xuất bản giao diện Dashboard để giám sát từ xa mà không cần đăng nhập tài khoản quản trị.
-- **Yêu cầu thực hiện:**
-  - Bật tính năng **Make Dashboard Public** trong phần quản trị CoreIOT.
-  - Sao chép đường dẫn liên kết công khai (Public URL kèm token truy cập).
-  - Thử nghiệm mở trên trình duyệt ẩn danh (Incognito Mode) để đảm bảo bất kỳ người dùng nào có liên kết đều có thể xem được số liệu thời gian thực.
-- **Kiểm chứng:** Dashboard hiển thị đầy đủ các widget đo đạc mà không yêu cầu nhập Mật khẩu hay Token quản trị.
+- **Kiểm chứng:** Nút gạt trên Dashboard giữ nguyên trạng thái xác nhận, terminal thiết bị in thông báo đổi trạng thái tức thì.
 
 ---
 
-## 4. Hướng dẫn chạy Mã nguồn Kiểm thử (Python Client)
+### 🌐 Bài 5: Xuất bản và chia sẻ Dashboard công khai
+- **Mục tiêu:** Xuất bản Dashboard ra ngoài Internet để giám sát mà không cần tài khoản quản trị viên.
+- **Yêu cầu thực hiện:**
+  - Kích hoạt tính năng **Make Dashboard Public** trong cài đặt Dashboard của CoreIOT.
+  - Trích xuất đường dẫn Public URL kèm token truy cập công khai.
+  - Kiểm thử mở trên trình duyệt ẩn danh (*Incognito Mode*).
+- **Kiểm chứng:** Người dùng bất kỳ có thể theo dõi đầy đủ biểu đồ và số liệu cảm biến mà không phải đăng nhập.
 
-Từ thư mục gốc của nhánh, thực hiện cài đặt thư viện và khởi chạy thiết bị:
+---
+
+## 🚀 5. Hướng dẫn cài đặt & Khởi chạy
+
+Chạy thiết bị giả lập IoT bằng Python từ thư mục gốc của dự án:
 
 ```bash
-# Cài đặt thư viện paho-mqtt
+# 1. Cài đặt thư viện giao tiếp MQTT
 pip install paho-mqtt
 
-# Chạy thiết bị giả lập IoT
+# 2. Khởi chạy thiết bị giả lập CoreIOT
 python lab1_device.py
 ```
 
+> **Lưu ý:** Trước khi chạy, đảm bảo hằng số `ACCESS_TOKEN` trong file `lab1_device.py` trùng khớp với Token bạn đã tạo trên Dashboard CoreIOT.
+
 ---
 
-## 5. Quy tắc kỹ thuật và Lưu ý quan trọng
+## ⚙️ 6. Quy tắc kỹ thuật & Lưu ý quan trọng
 
-1. **Access Token bảo mật:** Không để lộ Token thiết bị ra ngoài. Token phải dài tối thiểu 12 ký tự để tránh bị brute-force.
-2. **QoS (Quality of Service):** Truyền Telemetry nên sử dụng `QoS = 0` (hoặc `QoS = 1`) để đảm bảo tốc độ tối ưu.
-3. **RPC Timeout:** Nếu thiết bị không gửi phản hồi về `v1/devices/me/rpc/response/{id}` trong vòng 5000 ms, Dashboard sẽ báo lỗi Timeout và giao diện nút gạt sẽ bị trả ngược lại về trạng thái cũ.
+1. **Bảo mật Access Token:** Không chia sẻ hoặc đưa Token thiết bị lên các kho lưu trữ mã nguồn mở không bảo mật. Token nên có độ dài tối thiểu 12 ký tự để phòng ngừa tấn công dò quét (*brute-force*).
+2. **Cấp độ dịch vụ (QoS):** Dữ liệu Telemetry thường truyền với `QoS = 0` hoặc `QoS = 1` để tối ưu hóa băng thông đường truyền và giảm thiểu độ trễ.
+3. **RPC Timeout:** Thiết bị cần phản hồi lại yêu cầu RPC trong vòng tối đa **5000 ms**; nếu quá thời gian này máy chủ sẽ hủy yêu cầu và nút gạt trên Dashboard sẽ tự động quay về trạng thái ban đầu.
