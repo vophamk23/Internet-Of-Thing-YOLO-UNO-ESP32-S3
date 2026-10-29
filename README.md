@@ -130,8 +130,11 @@ Hệ thống phân chia tài nguyên xử lý trên hai nhân vi điều khiển
 ---
 
 ### 📈 Bài 1: Bộ lọc trung bình trượt (Moving Average 10 mẫu)
-- **Mục tiêu:** Loại bỏ hoàn toàn các xung nhiễu ngẫu nhiên từ cảm biến bằng bộ đệm vòng (*Circular Buffer*):
-  $$\bar{X}_k = \frac{1}{N} \sum_{i=0}^{N-1} X_{k-i} \quad (N = 10)$$
+- **Mục tiêu:** Loại bỏ hoàn toàn các xung nhiễu ngẫu nhiên từ cảm biến bằng bộ đệm vòng (*Circular Buffer*).
+- **Công thức tính toán:**
+  ```text
+  X_avg = (1 / N) * ∑ X[k - i]    (với N = 10 mẫu)
+  ```
 - **Thực thi:**
   - Lớp `SensorMovingAvg` duy trì mảng trượt 10 phần tử cho cả Nhiệt độ và Độ ẩm.
   - Khi đã thu thập đủ 10 mẫu đầu tiên, đường dữ liệu xuất ra trở nên mịn màng và có độ tin cậy cao.
@@ -154,9 +157,9 @@ Hệ thống phân chia tài nguyên xử lý trên hai nhân vi điều khiển
 - **Mục tiêu:** Khắc phục triệt để hiện tượng bật/tắt liên tục (*Chattering*) gây hại rơ-le hoặc quạt khi độ ẩm dao động quanh ngưỡng biên.
 - **Nguyên lý Deadband 1.0%:**
   - Giả định ngưỡng chuyển giữa **NORMAL** và **HUMID** là **75.0%**:
-    - Chuyển từ NORMAL $\rightarrow$ HUMID khi: $\text{Độ ẩm} \ge 75.0\%$.
-    - Chuyển từ HUMID $\rightarrow$ NORMAL chỉ khi: $\text{Độ ẩm} < 74.0\%$ (tức $75.0\% - 1.0\%$).
-- **Kiểm chứng:** Khi giá trị độ ẩm dao động nhẹ tại $74.8\%$, hệ thống giữ nguyên trạng thái trước đó, không bị rung lật trạng thái.
+    - Chuyển từ NORMAL → HUMID khi: `Độ ẩm >= 75.0%`.
+    - Chuyển từ HUMID → NORMAL chỉ khi: `Độ ẩm < 74.0%` (tức `75.0% - 1.0%`).
+- **Kiểm chứng:** Khi giá trị độ ẩm dao động nhẹ tại `74.8%`, hệ thống giữ nguyên trạng thái trước đó, không bị rung lật trạng thái.
 
 ---
 
