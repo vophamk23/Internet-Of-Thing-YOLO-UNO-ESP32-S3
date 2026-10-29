@@ -1,0 +1,1451 @@
+\setcounter{table}{0}
+\section{Tổng Quan và Kiến Trúc Hệ Thống (Bài Thực Hành 3)}
+
+\subsection{Giới thiệu chuẩn giao tiếp I²C và kiến trúc ngoại vi}
+Trong các hệ thống nhúng và mạng cảm biến Internet of Things (IoT), giao thức truyền thông nối tiếp \textbf{I²C} (Inter-Integrated Circuit) đóng vai trò là một trong những chuẩn giao tiếp phổ biến và hiệu quả nhất để liên kết các vi điều khiển trung tâm với các cảm biến kỹ thuật số và màn hình ngoại vi. Được phát minh bởi Philips Semiconductors (nay là NXP), I²C sử dụng cấu trúc bus 2 dây vật lý:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{SDA (Serial Data Line)}: Tuyến truyền nhận dữ liệu nối tiếp theo cơ chế song công bán phần (Half-Duplex).
+    \item \textbf{SCL (Serial Clock Line)}: Tuyến cấp xung nhịp đồng bộ từ thiết bị Master (ESP32-S3).
+\end{itemize}
+
+Đặc điểm vật lý nổi bật của bus I²C là cấu hình chân giao tiếp dạng \textbf{Cực thu hở (Open-Drain / Open-Collector)}, đòi hỏi bắt buộc phải có hai điện trở kéo lên nguồn ($R_{\text{pull-up}}$, thông thường từ $2.2\,\text{k}\Omega$ đến $4.7\,\text{k}\Omega$). Cấu hình này giúp nhiều thiết bị có thể cùng chia sẻ một bus vật lý duy nhất mà không gây hiện tượng xung đột ngắn mạch (Short-Circuit) thông qua cơ chế phân định bus (Bus Arbitration) và đồng bộ xung nhịp (Clock Synchronization).
+
+\subsection{Mục tiêu của bài thực hành}
+Bài thực hành số 3 trang bị cho sinh viên năng lực làm chủ giao tiếp bus I²C, điều khiển ngoại vi hiển thị, phối hợp xử lý thời gian thực với FreeRTOS và xây dựng các thuật toán lọc số khử nhiễu tín hiệu:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Giao tiếp cảm biến kỹ thuật số DHT20}: Đọc và giải mã dữ liệu độ ẩm tương đối ($0 - 100\%\,\text{RH}$) và nhiệt độ môi trường ($-40^\circ\text{C} - +80^\circ\text{C}$) thông qua địa chỉ I²C cố định \texttt{0x38} (56 thập phân).
+    \item \textbf{Điều khiển màn hình ký tự LCD 16x2 I²C}: Tích hợp module mở rộng I²C PCF8574 (địa chỉ \texttt{0x21} hoặc \texttt{0x27}) để hiển thị thông số môi trường trực quan, giảm số chân kết nối từ 16 chân song song xuống còn 2 chân I²C.
+    \item \textbf{Kiến trúc đa nhiệm FreeRTOS phân tầng}: Phân chia hệ thống thành các luồng độc lập: tác vụ đo đạc môi trường định kỳ (\texttt{task\_temp\_humi\_monitor}), tác vụ hiển thị cảnh báo nhiệt độ qua LED NeoPixel (\texttt{task\_neopixel}), và tác vụ điều biến tần số nhấp nháy LED đơn (\texttt{task\_led}).
+    \item \textbf{Đồng bộ và chia sẻ dữ liệu liên tác vụ}: Hiện thực giao tiếp an toàn qua các biến toàn cục dùng chung với định từ \texttt{volatile} để tránh tối ưu hóa thanh ghi của trình biên dịch.
+    \item \textbf{Cơ chế bảo an và tự phục hồi (Fail-Safe Mechanism)}: Phát hiện các sự cố vật lý (lỏng cáp, mất kết nối cảm biến I²C) và kích hoạt chế độ cảnh báo thị giác đặc biệt (NeoPixel chớp vàng, LED sáng liên tục, LCD báo lỗi).
+    \item \textbf{Nghiên cứu và phát triển thuật toán lọc số (Digital Filtering)}: Phân tích bộ lọc lấy mẫu trung bình (Average Filter) với dung sai ngưỡng, và đề xuất giải pháp vượt trội kết hợp giữa \textbf{Bộ lọc Trung vị (Median Filter)} và \textbf{Bộ lọc Trung bình động hàm mũ (Exponential Moving Average - EMA)}.
+\end{enumerate}
+
+\subsection{Bảng ánh xạ phần cứng trên bo mạch YoloUNO (ESP32-S3)}
+Toàn bộ hệ thống thực nghiệm được xây dựng trên kit vi điều khiển \textbf{YoloUNO} tích hợp chip trung tâm ESP32-S3 (Dual-Core Xtensa LX7, 240 MHz). Bảng~\ref{tab:hardware_iot_lab3} tổng hợp cấu hình các chân ngoại vi được sử dụng trong bài thực hành, được căn chỉnh vừa vặn với độ rộng khổ giấy.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|>{\raggedright\arraybackslash}p{2.6cm}|>{\centering\arraybackslash}p{1.8cm}|>{\centering\arraybackslash}p{2.3cm}|>{\centering\arraybackslash}p{2.2cm}|>{\raggedright\arraybackslash}X|}
+\hline
+\textbf{Tên ngoại vi} & \textbf{Chân GPIO} & \textbf{Chuẩn giao tiếp} & \textbf{Địa chỉ / Cấu hình} & \textbf{Chức năng trong bài} \\
+\hline
+\textbf{Bus I²C SDA} & GPIO 11 & Chuẩn I²C & Cổng Grove ĐỎ & Đường truyền dữ liệu nối tiếp \\
+\textbf{Bus I²C SCL} & GPIO 12 & Chuẩn I²C & Cổng Grove ĐỎ & Tuyến cấp xung nhịp đồng bộ \\
+\textbf{Cảm biến DHT20} & SDA/SCL & Bus I²C & \texttt{0x38} (56 Dec) & Thu thập nhiệt độ \& độ ẩm kỹ thuật số \\
+\textbf{Màn hình LCD 16x2} & SDA/SCL & Bus I²C (PCF8574) & \texttt{0x21} (33 Dec) & Hiển thị thông số và cảnh báo lỗi \\
+\textbf{LED đơn On-board} & GPIO 48 & Digital Output & Active-HIGH & Cảnh báo độ ẩm bằng tần số nháy \\
+\textbf{LED NeoPixel WS2812B} & GPIO 45 & 1-Wire Timing & $800\,\text{kHz}$ GRB & Chỉ thị màu sắc theo dải nhiệt độ \\
+\hline
+\end{tabularx}
+\vspace{0.2cm}
+\caption{Bảng ánh xạ chân phần cứng và thiết bị ngoại vi trên kit YoloUNO}
+\label{tab:hardware_iot_lab3}
+\end{table}
+
+\subsection{Kiến trúc phần mềm và luồng dữ liệu (Dataflow Architecture)}
+Hình~\ref{fig:lab3_dataflow} minh họa kiến trúc dòng dữ liệu và mối quan hệ giữa các tác vụ FreeRTOS trong hệ thống giám sát môi trường. Tác vụ thu thập cảm biến chạy chu kỳ $5\,\text{s}$, đọc dữ liệu qua bus I²C, cập nhật biến toàn cục và xuất màn hình LCD. Các tác vụ ngoại vi đọc độc lập biến chia sẻ để kích hoạt phản hồi thị giác tương ứng.
+
+\begin{figure}[h!]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=1.4cm and 1.5cm,
+    block/.style={rectangle, draw=blue!70, fill=blue!8, thick, rounded corners, minimum height=1.1cm, minimum width=3.2cm, align=center, font=\small\bfseries},
+    sensor/.style={rectangle, draw=teal!70, fill=teal!10, thick, rounded corners, minimum height=1.1cm, minimum width=2.6cm, align=center, font=\small\bfseries},
+    storage/.style={cylinder, draw=purple!70, fill=purple!10, shape border rotate=90, aspect=0.25, thick, minimum height=1.4cm, minimum width=3.4cm, align=center, font=\small\bfseries},
+    outputnode/.style={rectangle, draw=orange!80, fill=orange!10, thick, rounded corners, minimum height=1.1cm, minimum width=3.4cm, align=center, font=\small\bfseries},
+    arrow/.style={thick, ->, >=stealth}
+]
+
+% Nodes
+\node[sensor] (dht) {Cảm biến DHT20 \\ \scriptsize (I²C Addr: \texttt{0x38})};
+\node[block, right=1.6cm of dht] (monitor) {\texttt{task\_temp\_humi\_monitor} \\ \scriptsize (Đọc chu kỳ 5 giây, Core 1)};
+\node[sensor, below=1.0cm of dht] (lcd) {Màn hình LCD 16x2 \\ \scriptsize (I²C Addr: \texttt{0x21})};
+
+\node[storage, right=1.8cm of monitor] (shared) {Biến Toàn Cục \texttt{volatile} \\ \small \texttt{glob\_temperature} \\ \small \texttt{glob\_humidity}};
+
+\node[outputnode, above right=0.3cm and 1.8cm of shared] (neo) {\texttt{task\_neopixel} \\ \scriptsize (Chỉ thị dải nhiệt độ: \\ \scriptsize Xanh dương / Xanh lá / Đỏ)};
+\node[outputnode, below right=0.3cm and 1.8cm of shared] (led) {\texttt{task\_led\_humidity} \\ \scriptsize (Điều biến tần số nháy LED: \\ \scriptsize 0.5s / 1s / 2s)};
+
+\node[sensor, right=1.2cm of neo] (neohw) {LED NeoPixel \\ \scriptsize (GPIO 45)};
+\node[sensor, right=1.2cm of led] (ledhw) {LED Đơn On-board \\ \scriptsize (GPIO 48)};
+
+% Arrows
+\draw[arrow, line width=1pt] (dht) -- node[above, font=\scriptsize] {Bus I²C} (monitor);
+\draw[arrow, line width=1pt] (monitor) |- node[near end, left, font=\scriptsize] {Xuất LCD} (lcd);
+\draw[arrow, line width=1pt] (monitor) -- node[above, font=\scriptsize] {Ghi dữ liệu} (shared);
+\draw[arrow, line width=1pt] (shared) |- node[above, near start, font=\scriptsize] {Đọc $T$} (neo);
+\draw[arrow, line width=1pt] (shared) |- node[below, near start, font=\scriptsize] {Đọc $H$} (led);
+\draw[arrow, line width=1pt] (neo) -- (neohw);
+\draw[arrow, line width=1pt] (led) -- (ledhw);
+
+\end{tikzpicture}%
+}
+\caption{Sơ đồ kiến trúc phần mềm và luồng dữ liệu liên tác vụ trong FreeRTOS}
+\label{fig:lab3_dataflow}
+\end{figure}
+
+\newpage
+\section{Nội Dung Chi Tiết Các Bài Tập Thực Hành}
+
+% =============================================================================
+% BÀI 1
+% =============================================================================
+\subsection{Bài 1: Đọc cảm biến DHT20 và NeoPixel chỉ thị dải giá trị nhiệt độ}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Viết tác vụ \texttt{task\_neopixel} định kỳ mỗi 5 giây đọc giá trị từ biến dùng chung \texttt{glob\_temperature}.
+    \item Điều khiển màu sắc của đèn LED NeoPixel theo các ngưỡng nhiệt độ sau:
+    \begin{itemize}
+        \item \textbf{Màu Xanh dương (Blue)}: Khi nhiệt độ $TEMP < 20.0^\circ\text{C}$ (Môi trường Lạnh).
+        \item \textbf{Màu Xanh lá (Green)}: Khi $20.0^\circ\text{C} \le TEMP < 28.0^\circ\text{C}$ (Môi trường Lý tưởng / Thoải mái).
+        \item \textbf{Màu Đỏ (Red)}: Khi nhiệt độ $TEMP \ge 28.0^\circ\text{C}$ (Môi trường Nóng / Cảnh báo nhiệt độ cao).
+    \end{itemize}
+    \item Đảm bảo tác vụ đọc cảm biến DHT20 và tác vụ cập nhật NeoPixel hoạt động độc lập, không block lẫn nhau.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Bảng quy chuẩn phân dải nhiệt độ và mã màu NeoPixel}
+Bảng~\ref{tab:ex1_temp_ranges} mô tả chi tiết các phân vùng nhiệt độ, ý nghĩa môi trường và mã màu RGB tương ứng được nạp vào hàm \texttt{pixel.Color(R, G, B)}. Bảng được căn chỉnh vừa vặn với độ rộng văn bản.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|>{\centering\arraybackslash}p{4.2cm}|>{\centering\arraybackslash}p{2.5cm}|>{\centering\arraybackslash}X|>{\centering\arraybackslash}p{1.6cm}|>{\centering\arraybackslash}p{1.6cm}|>{\centering\arraybackslash}p{1.6cm}|}
+\hline
+\textbf{Dải nhiệt độ} & \textbf{Trạng thái} & \textbf{Màu hiển thị} & \textbf{Giá trị R} & \textbf{Giá trị G} & \textbf{Giá trị B} \\
+\hline
+$TEMP < 20.0^\circ\text{C}$ & Lạnh (Cold) & Xanh dương (Blue) & 0 & 0 & 255 \\
+$20.0^\circ\text{C} \le TEMP < 28.0^\circ\text{C}$ & Lý tưởng (Ideal) & Xanh lá (Green) & 0 & 255 & 0 \\
+$TEMP \ge 28.0^\circ\text{C}$ & Nóng (Hot) & Đỏ (Red) & 255 & 0 & 0 \\
+\hline
+\end{tabularx}
+\vspace{0.2cm}
+\caption{Quy chuẩn phân dải nhiệt độ và trạng thái màu sắc LED NeoPixel}
+\label{tab:ex1_temp_ranges}
+\end{table}
+
+\vspace{0.2cm}
+\subsubsection{Mã nguồn hoàn chỉnh chương trình (\texttt{exercise\_1.cpp})}
+Mã nguồn độc lập hoàn chỉnh hiện thực Bài 1 được trình bày dưới đây. Các chú thích trong code được chuẩn hóa định dạng bảng mã ASCII nhằm đảm bảo quá trình biên dịch tài liệu tuyệt đối ổn định.
+
+\begin{lstlisting}[language=C++]
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_NeoPixel.h>
+#include "DHT20.h"
+#include "LiquidCrystal_I2C.h"
+
+// ============================================================================
+// DINH NGHIA CHAN PHAN CUNG TREN YoloUNO (ESP32-S3)
+// ============================================================================
+#define LED_PIN GPIO_NUM_48 // LED don on-board (GPIO 48)
+#define NEO_PIN 45          // LED NeoPixel RGB (GPIO 45)
+#define LED_COUNT 1         // 1 hat LED NeoPixel
+#define SDA_PIN 11          // I2C SDA (Cong DO)
+#define SCL_PIN 12          // I2C SCL (Cong DO)
+#define LCD_ADDR 33         // Dia chi I2C LCD 16x2 (thap phan 33 = 0x21)
+
+// ============================================================================
+// KHOI TAO DOI TUONG NGOAI VI
+// ============================================================================
+DHT20 dht20;
+LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
+Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+
+// Bien toan cuc dung chung giua cac tac vu (Inter-Task Communication)
+volatile float glob_temperature = 0.0;
+volatile float glob_humidity = 0.0;
+
+// ============================================================================
+// TAC VU 1: Doc cam bien DHT20 va Cap nhat hien thi LCD / Serial
+// ============================================================================
+void task_temp_humi_monitor(void *pvParameters) {
+
+  // Khoi dong bus I2C va cam bien DHT20
+  Wire.begin(SDA_PIN, SCL_PIN);
+  dht20.begin();
+
+  // Khoi dong man hinh LCD 16x2
+  lcd.begin();
+  lcd.backlight();
+  lcd.clear();
+
+  while (1) {
+
+    // 1. Doc du lieu tu DHT20 qua I2C
+    int status = dht20.read();
+    float t = dht20.getTemperature();
+    float h = dht20.getHumidity();
+
+    // 2. Kiem tra tinh hop le cua du lieu
+    if (status == 0 && !isnan(t) && !isnan(h)) {
+
+      // Cap nhat bien toan cuc
+      glob_temperature = t;
+      glob_humidity = h;
+
+      // In ket qua ra Serial Monitor
+      Serial.print("[DHT20] Nhiet do: ");
+      Serial.print(glob_temperature, 1);
+      Serial.print(" *C | Do am: ");
+      Serial.print(glob_humidity, 1);
+      Serial.println(" %");
+
+      // Cap nhat dong 1 tren LCD: Nhiet do
+      lcd.setCursor(0, 0);
+      lcd.print("Temp: ");
+      lcd.print(glob_temperature, 1);
+      lcd.print((char)223); // Ky tu do  deg
+      lcd.print("C   ");
+
+      // Cap nhat dong 2 tren LCD: Do am
+      lcd.setCursor(0, 1);
+      lcd.print("Humi: ");
+      lcd.print(glob_humidity, 1);
+      lcd.print("%   ");
+
+    } else {
+
+      Serial.println("[DHT20] Loi doc cam bien!");
+    }
+
+    // Nhuong CPU trong 5 giay (Chu ky do cua cam bien)
+    vTaskDelay(5000);
+  }
+}
+
+// ============================================================================
+// TAC VU 2: Dieu khien mau NeoPixel theo dai nhiet do
+// ============================================================================
+void task_neopixel(void *pvParameters) {
+
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  while (1) {
+
+    float temp = glob_temperature;
+
+    // Phan loai dai nhiet do theo yeu cau de bai:
+    if (temp < 20.0) {
+
+      // Xanh duong neu TEMP < 20 C
+      strip.setPixelColor(0, strip.Color(0, 0, 255));
+
+    } else if (temp < 28.0) {
+
+      // Xanh la neu 20 C <= TEMP < 28 C
+      strip.setPixelColor(0, strip.Color(0, 255, 0));
+
+    } else {
+
+      // Do neu TEMP >= 28 C
+      strip.setPixelColor(0, strip.Color(255, 0, 0));
+    }
+
+    // Ap dung mau ra LED NeoPixel
+    strip.show();
+
+    // Lam moi hien thi moi 1 giay
+    vTaskDelay(1000);
+  }
+}
+
+// ============================================================================
+// HAM SETUP & KHOI TAO CAC TAC VU FREE RTOS
+// ============================================================================
+void setup() {
+
+  Serial.begin(115200);
+
+  // Tao tac vu 1: Doc cam bien nhiet do & do am
+  xTaskCreate(
+      task_temp_humi_monitor, // Ham tac vu
+      "Temp_Humi_Monitor",    // Ten tac vu
+      4096,                   // Stack depth (bytes)
+      NULL,                   // Tham so truyen vao
+      2,                      // Do uu tien (Priority)
+      NULL                    // Task handle
+  );
+
+  // Tao tac vu 2: Dieu khien den chi thi NeoPixel
+  xTaskCreate(
+      task_neopixel,          // Ham tac vu
+      "Task_NeoPixel",        // Ten tac vu
+      2048,                   // Stack depth (bytes)
+      NULL,                   // Tham so truyen vao
+      1,                      // Do uu tien (Priority)
+      NULL                    // Task handle
+  );
+}
+
+void loop() {
+  // FreeRTOS quan ly cac tac vu, loop() de trong
+}
+
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Cơ chế FreeRTOS trong Bài 1}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Khởi tạo và cấu hình I²C}: Khác với các vi điều khiển truyền thống (như ATmega328P với chân I²C cố định), ESP32-S3 tích hợp bộ ghép kênh vào/ra tín hiệu (IO MUX). Lệnh \texttt{Wire.begin(SDA\_PIN, SCL\_PIN)} cấu hình linh hoạt GPIO 11 làm đường SDA và GPIO 12 làm đường SCL. Module DHT20 được khởi tạo tại địa chỉ cố định \texttt{0x38}, trong khi màn hình LCD hoạt động tại địa chỉ \texttt{0x21}.
+    \item \textbf{Giao tiếp liên tác vụ với định từ \texttt{volatile}}: Biến chia sẻ \texttt{glob\_temperature} được dùng chung giữa tác vụ \texttt{task\_temp\_humi\_monitor} (ghi) và tác vụ \texttt{task\_neopixel} (đọc). Định từ \texttt{volatile} thông báo cho bộ biên dịch GCC biết rằng giá trị của biến này có thể bị thay đổi bất ngờ bởi một tác vụ khác hoặc ngắt phần cứng, buộc CPU phải đọc trực tiếp từ ô nhớ RAM thay vì tái sử dụng giá trị đã lưu tạm trong thanh ghi cục bộ (Register Caching).
+    \item \textbf{Tiết kiệm năng lượng bằng \texttt{vTaskDelay}}: Cả hai tác vụ đều thiết lập chu kỳ lặp $5\,\text{s}$ bằng hàm \texttt{vTaskDelay(pdMS\_TO\_TICKS(5000))}. Trong suốt thời gian $5000\,\text{ms}$, tác vụ chủ động nhường quyền CPU và chuyển sang trạng thái \textbf{Blocked}. Bộ lập lịch (Scheduler) của FreeRTOS sẽ tận dụng thời gian này để thực thi tác vụ nền (\texttt{IDLE}) hoặc đưa lõi vi xử lý vào chế độ hạ xung nhịp để giảm thiểu tiêu thụ điện năng.
+\end{itemize}
+
+\newpage
+% =============================================================================
+% BÀI 2
+% =============================================================================
+\subsection{Bài 2: Điều biến tần số nhấp nháy LED theo độ ẩm môi trường}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Bổ sung tác vụ mới \texttt{task\_led} để điều khiển nhấp nháy đèn LED đơn on-board (GPIO 48) dựa vào biến toàn cục \texttt{glob\_humidity}.
+    \item Tần số nhấp nháy của LED được điều biến theo 3 mức độ ẩm môi trường:
+    \begin{itemize}
+        \item \textbf{Độ ẩm thấp} ($HUMI < 40.0\%$): LED nhấp nháy chậm với chu kỳ $2\,\text{s}$ ($1\,\text{s}$ BẬT / $1\,\text{s}$ TẮT), tần số $f = 0.5\,\text{Hz}$.
+        \item \textbf{Độ ẩm bình thường} ($40.0\% \le HUMI \le 60.0\%$): LED nhấp nháy trung bình với chu kỳ $1\,\text{s}$ ($0.5\,\text{s}$ BẬT / $0.5\,\text{s}$ TẮT), tần số $f = 1.0\,\text{Hz}$.
+        \item \textbf{Độ ẩm cao} ($HUMI > 60.0\%$): LED nhấp nháy nhanh với chu kỳ $0.5\,\text{s}$ ($0.25\,\text{s}$ BẬT / $0.25\,\text{s}$ TẮT), tần số $f = 2.0\,\text{Hz}$.
+    \end{itemize}
+    \item Toàn bộ 3 tác vụ (\texttt{task\_temp\_humi\_monitor}, \texttt{task\_neopixel}, \texttt{task\_led}) phải vận hành song song, đồng thời và không được gây trễ nhịp cho nhau.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Biểu đồ thời gian (Timing Diagram) của 3 chế độ nhấp nháy LED}
+Hình~\ref{fig:ex2_timing} biểu diễn dạng sóng điều khiển GPIO 48 tương ứng với 3 dải độ ẩm khác nhau của môi trường, được co giãn vừa vặn với lề văn bản.
+
+\begin{figure}[h!]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[x=1.5cm, y=1.2cm]
+    \draw[->, thick] (0,0) -- (6.5,0) node[right, font=\footnotesize] {Thời gian $t$ (giây)};
+    \draw[->, thick] (0,0) -- (0,3.5) node[above, font=\footnotesize] {Trạng thái LED};
+
+    % Độ ẩm thấp: Chu kỳ 2s
+    \node[anchor=east, font=\scriptsize\bfseries] at (-0.1, 2.7) {$H < 40\%$ (2s)};
+    \draw[blue, thick] (0, 2.3) -- (1, 2.3) -- (1, 3.1) -- (2, 3.1) -- (2, 2.3) -- (3, 2.3) -- (3, 3.1) -- (4, 3.1) -- (4, 2.3) -- (5, 2.3) -- (5, 3.1) -- (6, 3.1);
+    \node[above, font=\tiny, color=blue] at (0.5, 2.3) {TẮT 1s};
+    \node[above, font=\tiny, color=blue] at (1.5, 3.1) {SÁNG 1s};
+
+    % Độ ẩm bình thường: Chu kỳ 1s
+    \node[anchor=east, font=\scriptsize\bfseries] at (-0.1, 1.6) {$40\% \le H \le 60\%$ (1s)};
+    \draw[teal!80!black, thick] (0, 1.2) -- (0.5, 1.2) -- (0.5, 2.0) -- (1.0, 2.0) -- (1.0, 1.2) -- (1.5, 1.2) -- (1.5, 2.0) -- (2.0, 2.0) -- (2.0, 1.2) -- (2.5, 1.2) -- (2.5, 2.0) -- (3.0, 2.0) -- (3.0, 1.2) -- (3.5, 1.2) -- (3.5, 2.0) -- (4.0, 2.0) -- (4.0, 1.2) -- (4.5, 1.2) -- (4.5, 2.0) -- (5.0, 2.0) -- (5.0, 1.2) -- (5.5, 1.2) -- (5.5, 2.0) -- (6.0, 2.0);
+
+    % Độ ẩm cao: Chu kỳ 0.5s
+    \node[anchor=east, font=\scriptsize\bfseries] at (-0.1, 0.5) {$H > 60\%$ (0.5s)};
+    \draw[red, thick] (0, 0.2) -- (0.25, 0.2) -- (0.25, 0.8) -- (0.5, 0.8) -- (0.5, 0.2) -- (0.75, 0.2) -- (0.75, 0.8) -- (1.0, 0.8) -- (1.0, 0.2) -- (1.25, 0.2) -- (1.25, 0.8) -- (1.5, 0.8) -- (1.5, 0.2) -- (1.75, 0.2) -- (1.75, 0.8) -- (2.0, 0.8) -- (2.0, 0.2) -- (2.25, 0.2) -- (2.25, 0.8) -- (2.5, 0.8) -- (2.5, 0.2) -- (2.75, 0.2) -- (2.75, 0.8) -- (3.0, 0.8) -- (3.0, 0.2) -- (3.25, 0.2) -- (3.25, 0.8) -- (3.5, 0.8) -- (3.5, 0.2) -- (3.75, 0.2) -- (3.75, 0.8) -- (4.0, 0.8) -- (4.0, 0.2) -- (4.25, 0.2) -- (4.25, 0.8) -- (4.5, 0.8) -- (4.5, 0.2) -- (4.75, 0.2) -- (4.75, 0.8) -- (5.0, 0.8) -- (5.0, 0.2) -- (5.25, 0.2) -- (5.25, 0.8) -- (5.5, 0.8) -- (5.5, 0.2) -- (5.75, 0.2) -- (5.75, 0.8) -- (6.0, 0.8);
+
+    % Grid mốc thời gian
+    \foreach \t in {1, 2, 3, 4, 5, 6} {
+        \draw[dashed, gray!50] (\t, 0) -- (\t, 3.2);
+        \node[below, font=\tiny] at (\t, 0) {\t s};
+    }
+\end{tikzpicture}%
+}
+\caption{Dạng sóng điều khiển tần số nhấp nháy LED theo độ ẩm môi trường}
+\label{fig:ex2_timing}
+\end{figure}
+
+\vspace{0.2cm}
+\subsubsection{Mã nguồn hoàn chỉnh chương trình (\texttt{exercise\_2.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_NeoPixel.h>
+#include "DHT20.h"
+#include "LiquidCrystal_I2C.h"
+
+// ============================================================================
+// DINH NGHIA CHAN PHAN CUNG TREN YoloUNO (ESP32-S3)
+// ============================================================================
+#define LED_PIN GPIO_NUM_48 // LED don on-board (GPIO 48)
+#define NEO_PIN 45          // LED NeoPixel RGB (GPIO 45)
+#define LED_COUNT 1         // 1 hat LED NeoPixel
+#define SDA_PIN 11          // I2C SDA (Cong DO)
+#define SCL_PIN 12          // I2C SCL (Cong DO)
+#define LCD_ADDR 33         // Dia chi I2C LCD 16x2 (thap phan 33 = 0x21)
+
+// ============================================================================
+// KHOI TAO DOI TUONG NGOAI VI
+// ============================================================================
+DHT20 dht20;
+LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
+Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+
+// Bien toan cuc dung chung giua cac tac vu (Inter-Task Communication)
+volatile float glob_temperature = 0.0;
+volatile float glob_humidity = 0.0;
+
+// ============================================================================
+// TAC VU 1: Doc cam bien DHT20 va Hien thi LCD
+// ============================================================================
+void task_temp_humi_monitor(void *pvParameters) {
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  dht20.begin();
+
+  lcd.begin();
+  lcd.backlight();
+  lcd.clear();
+
+  while (1) {
+
+    int status = dht20.read();
+    float t = dht20.getTemperature();
+    float h = dht20.getHumidity();
+
+    if (status == 0 && !isnan(t) && !isnan(h)) {
+
+      glob_temperature = t;
+      glob_humidity = h;
+
+      lcd.setCursor(0, 0);
+      lcd.print("Temp: ");
+      lcd.print(glob_temperature, 1);
+      lcd.print((char)223);
+      lcd.print("C   ");
+
+      lcd.setCursor(0, 1);
+      lcd.print("Humi: ");
+      lcd.print(glob_humidity, 1);
+      lcd.print("%   ");
+    }
+
+    vTaskDelay(5000);
+  }
+}
+
+// ============================================================================
+// TAC VU 2: Dieu khien NeoPixel theo dai nhiet do (Ke thua tu Bai 1)
+// ============================================================================
+void task_neopixel(void *pvParameters) {
+
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  while (1) {
+
+    float temp = glob_temperature;
+
+    if (temp < 20.0) {
+
+      strip.setPixelColor(0, strip.Color(0, 0, 255)); // Xanh duong (< 20 C)
+
+    } else if (temp < 28.0) {
+
+      strip.setPixelColor(0, strip.Color(0, 255, 0)); // Xanh la (20 C - 28 C)
+
+    } else {
+
+      strip.setPixelColor(0, strip.Color(255, 0, 0)); // Do (>= 28 C)
+    }
+
+    strip.show();
+    vTaskDelay(1000);
+  }
+}
+
+// ============================================================================
+// TAC VU 3: Dieu khien nhip nhay LED don theo gia tri do am
+// ============================================================================
+void task_led(void *pvParameters) {
+
+  pinMode(LED_PIN, OUTPUT);
+
+  while (1) {
+
+    float humi = glob_humidity;
+    uint32_t half_period_ms = 500; // Mac dinh 500ms (chu ky 1s)
+
+    // Xac dinh tan so nhap nhay theo do am:
+    if (humi < 40.0) {
+
+      // Do am thap (<40%): Nhap nhay moi 2 giay (Sang 1s, Tat 1s)
+      half_period_ms = 1000;
+
+    } else if (humi <= 60.0) {
+
+      // Do am binh thuong (40%-60%): Nhap nhay moi 1 giay (Sang 0.5s, Tat 0.5s)
+      half_period_ms = 500;
+
+    } else {
+
+      // Do am cao (>60%): Nhap nhay nhanh moi 0.5 giay (Sang 0.25s, Tat 0.25s)
+      half_period_ms = 250;
+    }
+
+    // Bat LED
+    digitalWrite(LED_PIN, HIGH);
+    vTaskDelay(half_period_ms);
+
+    // Tat LED
+    digitalWrite(LED_PIN, LOW);
+    vTaskDelay(half_period_ms);
+  }
+}
+
+// ============================================================================
+// HAM SETUP & KHOI TAO CAC TAC VU FREE RTOS
+// ============================================================================
+void setup() {
+
+  Serial.begin(115200);
+
+  // Tac vu 1: Doc cam bien
+  xTaskCreate(
+      task_temp_humi_monitor,
+      "Temp_Humi_Monitor",
+      4096,
+      NULL,
+      2,
+      NULL
+  );
+
+  // Tac vu 2: Den NeoPixel chi thi nhiet do
+  xTaskCreate(
+      task_neopixel,
+      "Task_NeoPixel",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+
+  // Tac vu 3: Den LED nhap nhay theo do am
+  xTaskCreate(
+      task_led,
+      "Task_LED_Humi",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+}
+
+void loop() {}
+
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Cơ chế FreeRTOS trong Bài 2}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Điều biến chu kỳ động (Dynamic Period Modulation)}: Biến \texttt{half\_period} được tính toán lại linh hoạt ở mỗi vòng lặp dựa trên giá trị tức thời của \texttt{glob\_humidity}. Nếu độ ẩm chuyển dải (ví dụ từ $55\%$ vọt lên $70\%$), tác vụ chỉ cần hoàn tất chu kỳ trễ hiện tại rồi chuyển ngay sang tần số nhấp nháy mới mà không gây xung gai (Glitch) làm gián đoạn trạng thái logic của chân GPIO.
+    \item \textbf{Tính bất đồng bộ đa tần số (Multi-Rate Asynchronous Scheduling)}: Hệ thống vận hành đồng thời 3 luồng có tần số chu kỳ hoàn toàn khác biệt:
+    \begin{itemize}
+        \item Luồng đọc cảm biến DHT20: Chu kỳ $5000\,\text{ms}$ ($f_1 = 0.2\,\text{Hz}$).
+        \item Luồng cập nhật màu NeoPixel: Chu kỳ $5000\,\text{ms}$ ($f_2 = 0.2\,\text{Hz}$).
+        \item Luồng chớp LED cảnh báo: Chu kỳ $500\,\text{ms} - 2000\,\text{ms}$ ($f_3 = 0.5 - 2.0\,\text{Hz}$).
+    \end{itemize}
+    Nhờ cơ chế định thời độc lập của FreeRTOS qua con trỏ bộ đếm ngắt hệ thống (SysTick interrupt), tác vụ chớp LED liên tục đổi trạng thái đúng hạn mà không hề bị đình trệ trong thời gian tác vụ I²C chiếm dụng bus.
+\end{itemize}
+
+\newpage
+% =============================================================================
+% BÀI 3
+% =============================================================================
+\subsection{Bài 3: Xử lý sự cố ngắt kết nối cảm biến và cơ chế bảo an (Fail-Safe)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Giả lập hoặc xử lý tình huống cảm biến DHT20 bị mất kết nối vật lý (tuột dây bus I²C SDA/SCL hoặc đứt nguồn cấp).
+    \item Khi mất kết nối ($TEMP = 0.0$ và $HUMI = 0.0$, hoặc mã lỗi I²C khác 0), hệ thống phải kích hoạt chế độ \textbf{Bảo an (Fail-Safe)}:
+    \begin{itemize}
+        \item Đèn NeoPixel chuyển sang \textbf{nhấp nháy màu Vàng (Yellow)} cảnh báo khẩn cấp (chu kỳ nhanh: $300\,\text{ms}$ BẬT / $300\,\text{ms}$ TẮT).
+        \item Đèn LED đơn on-board (GPIO 48) chuyển sang trạng thái \textbf{SÁNG liên tục} (Solid ON).
+        \item Màn hình LCD 16x2 hiển thị thông báo chẩn đoán: \texttt{"[!] SENSOR ERROR"} và \texttt{"Check I2C Wire!"}.
+    \end{itemize}
+    \item Khi cảm biến được gắn trở lại, hệ thống phải tự động nhận diện và khôi phục hoạt động bình thường (\textbf{Self-Healing}).
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Mô hình máy trạng thái hữu hạn (FSM) xử lý sự cố Fail-Safe}
+Hình~\ref{fig:ex3_fsm} mô tả lưu đồ chuyển trạng thái FSM giữa chế độ hoạt động bình thường (Normal Monitoring) và chế độ cảnh báo sự cố (Fault / Alert Mode).
+
+\begin{figure}[h!]
+\centering
+\resizebox{0.9\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=3.0cm,
+    state/.style={circle, draw=blue!80, fill=blue!10, thick, minimum size=3.2cm, align=center, font=\small\bfseries},
+    alertstate/.style={circle, draw=red!80, fill=red!10, thick, minimum size=3.2cm, align=center, font=\small\bfseries},
+    arrow/.style={thick, ->, >=stealth}
+]
+
+\node[state] (normal) {CHẾ ĐỘ BÌNH THƯỜNG \\ \scriptsize (Normal Mode) \\ \tiny NeoPixel: Theo nhiệt độ \\ \tiny LED: Nháy theo độ ẩm \\ \tiny LCD: Hiện chỉ số};
+\node[alertstate, right=3.5cm of normal] (fault) {CHẾ ĐỘ SỰ CỐ \\ \scriptsize (Fault / Fail-Safe) \\ \tiny NeoPixel: Nháy Vàng 0.3s \\ \tiny LED: Sáng liên tục \\ \tiny LCD: Báo lỗi kết nối};
+
+\draw[arrow, red, line width=1.2pt] (normal) to[bend left=30] 
+    node[above, text width=3.8cm, align=center, font=\footnotesize] {Phát hiện mất kết nối \\ $T=0 \land H=0$ hoặc \\ $status \ne 0$} (fault);
+
+\draw[arrow, teal!80!black, line width=1.2pt] (fault) to[bend left=30] 
+    node[below, text width=3.8cm, align=center, font=\footnotesize] {Cảm biến cắm lại \\ Nhận diện $status == 0$ \\ Dữ liệu hợp lệ} (normal);
+
+\end{tikzpicture}%
+}
+\caption{Máy trạng thái hữu hạn (FSM) chuyển đổi giữa chế độ bình thường và chế độ bảo an}
+\label{fig:ex3_fsm}
+\end{figure}
+
+\vspace{0.2cm}
+\subsubsection{Mã nguồn hoàn chỉnh chương trình (\texttt{exercise\_3.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_NeoPixel.h>
+#include "DHT20.h"
+#include "LiquidCrystal_I2C.h"
+
+// ============================================================================
+// DINH NGHIA CHAN PHAN CUNG TREN YoloUNO (ESP32-S3)
+// ============================================================================
+#define LED_PIN GPIO_NUM_48 // LED don on-board (GPIO 48)
+#define NEO_PIN 45          // LED NeoPixel RGB (GPIO 45)
+#define LED_COUNT 1         // 1 hat LED NeoPixel
+#define SDA_PIN 11          // I2C SDA (Cong DO)
+#define SCL_PIN 12          // I2C SCL (Cong DO)
+#define LCD_ADDR 33         // Dia chi I2C LCD 16x2 (thap phan 33 = 0x21)
+
+// ============================================================================
+// KHOI TAO DOI TUONG NGOAI VI
+// ============================================================================
+DHT20 dht20;
+LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
+Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+
+// Bien toan cuc chia se
+volatile float glob_temperature = 0.0;
+volatile float glob_humidity = 0.0;
+volatile bool glob_sensor_error = false; // Co bao loi cam bien
+
+// ============================================================================
+// TAC VU 1: Doc cam bien & Phat hien loi cam bien
+// ============================================================================
+void task_temp_humi_monitor(void *pvParameters) {
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  dht20.begin();
+
+  lcd.begin();
+  lcd.backlight();
+  lcd.clear();
+
+  while (1) {
+
+    int status = dht20.read();
+    float t = dht20.getTemperature();
+    float h = dht20.getHumidity();
+
+    // Dieu kien loi: loi I2C, isnan, hoac ca 2 gia tri deu bang 0
+    if (status != 0 || isnan(t) || isnan(h) || (t == 0.0 && h == 0.0)) {
+
+      glob_sensor_error = true;
+      glob_temperature = 0.0;
+      glob_humidity = 0.0;
+      Serial.println("[CANH BAO] Cam bien DHT20 bi loi hoac mat ket noi!");
+
+      // Bao loi tren LCD
+      lcd.setCursor(0, 0);
+      lcd.print("! SENSOR ERROR !");
+      lcd.setCursor(0, 1);
+      lcd.print("Check DHT20 I2C ");
+
+    } else {
+
+      glob_sensor_error = false;
+      glob_temperature = t;
+      glob_humidity = h;
+
+      lcd.setCursor(0, 0);
+      lcd.print("Temp: ");
+      lcd.print(glob_temperature, 1);
+      lcd.print((char)223);
+      lcd.print("C   ");
+
+      lcd.setCursor(0, 1);
+      lcd.print("Humi: ");
+      lcd.print(glob_humidity, 1);
+      lcd.print("%   ");
+    }
+
+    vTaskDelay(5000);
+  }
+}
+
+// ============================================================================
+// TAC VU 2: NeoPixel (Loi: Nhap nhay VANG / Binh thuong: Chi thi nhiet do)
+// ============================================================================
+void task_neopixel(void *pvParameters) {
+
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  while (1) {
+
+    if (glob_sensor_error || (glob_temperature == 0.0 && glob_humidity == 0.0)) {
+
+      // Khi xay ra loi: NeoPixel nhap nhay mau VANG canh bao
+      strip.setPixelColor(0, strip.Color(255, 200, 0)); // Bat VANG
+      strip.show();
+      vTaskDelay(500);
+
+      strip.setPixelColor(0, strip.Color(0, 0, 0));     // Tat
+      strip.show();
+      vTaskDelay(500);
+
+    } else {
+
+      // Khi binh thuong: Khoi phuc chi thi mau theo nhiet do (Bai 1)
+      float temp = glob_temperature;
+
+      if (temp < 20.0) {
+        strip.setPixelColor(0, strip.Color(0, 0, 255)); // Xanh duong
+      } else if (temp < 28.0) {
+        strip.setPixelColor(0, strip.Color(0, 255, 0)); // Xanh la
+      } else {
+        strip.setPixelColor(0, strip.Color(255, 0, 0)); // Do
+      }
+
+      strip.show();
+      vTaskDelay(1000);
+    }
+  }
+}
+
+// ============================================================================
+// TAC VU 3: LED (Loi: SANG LIEN TUC / Binh thuong: Nhap nhay theo do am)
+// ============================================================================
+void task_led(void *pvParameters) {
+
+  pinMode(LED_PIN, OUTPUT);
+
+  while (1) {
+
+    if (glob_sensor_error || (glob_temperature == 0.0 && glob_humidity == 0.0)) {
+
+      // Khi xay ra loi: LED sang lien tuc (Solid ON) cho den khi het loi
+      digitalWrite(LED_PIN, HIGH);
+      vTaskDelay(200);
+
+    } else {
+
+      // Khi binh thuong: Khoi phuc nhap nhay theo do am (Bai 2)
+      float humi = glob_humidity;
+      uint32_t half_period_ms = (humi < 40.0) ? 1000 : ((humi <= 60.0) ? 500 : 250);
+
+      digitalWrite(LED_PIN, HIGH);
+      vTaskDelay(half_period_ms);
+
+      digitalWrite(LED_PIN, LOW);
+      vTaskDelay(half_period_ms);
+    }
+  }
+}
+
+// ============================================================================
+// HAM SETUP & KHOI TAO CAC TAC VU FREE RTOS
+// ============================================================================
+void setup() {
+
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_temp_humi_monitor,
+      "Temp_Humi_Monitor",
+      4096,
+      NULL,
+      2,
+      NULL
+  );
+
+  xTaskCreate(
+      task_neopixel,
+      "Task_NeoPixel",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+
+  xTaskCreate(
+      task_led,
+      "Task_LED_Control",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+}
+
+void loop() {}
+
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Cơ chế tự phục hồi (Self-Healing)}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Cơ chế phát hiện lỗi I²C}: Thư viện \texttt{DHT20.h} giao tiếp với cảm biến bằng cách gửi byte lệnh đo \texttt{0xAC, 0x33, 0x00} và chờ byte trạng thái phản hồi. Khi cáp vật lý bị ngắt, hàm \texttt{dht20.read()} không nhận được bit phản hồi ACK (Acknowledge) từ thiết bị Slave, lập tức trả về mã lỗi phần cứng khác 0. Khi đó, hàm \texttt{is\_sensor\_error()} phát hiện trạng thái bất thường và đưa cờ lỗi vào hệ thống.
+    \item \textbf{Tính năng tự phục hồi (Self-Healing Architecture)}: Trong các thiết bị IoT công nghiệp, việc bảo trì thủ công (ấn nút Reset) khi đường truyền mạng chập chờn là không thực tế. Hệ thống trong Bài 3 duy trì việc gửi gói thăm dò I²C ở mỗi chu kỳ $5\,\text{s}$. Ngay khi cảm biến được kết nối trở lại, đường truyền I²C phục hồi tín hiệu kéo lên ($V_{DD} = 3.3\,\text{V}$), hàm \texttt{dht20.read()} trả về giá trị 0 (Thành công), các tác vụ tự động thoát khỏi khối lệnh cảnh báo lỗi và trở lại chế độ giám sát bình thường mà không cần khởi động lại vi điều khiển.
+\end{itemize}
+
+\newpage
+% =============================================================================
+% BÀI 4
+% =============================================================================
+\subsection{Bài 4: Bộ lọc lấy mẫu trung bình (Average Filter) khử rung tín hiệu}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Xây dựng thuật toán lọc số khử nhiễu: Mỗi chu kỳ đo, thu thập cụm liên tiếp $N = 5$ mẫu cảm biến DHT20, mỗi mẫu cách nhau $100\,\text{ms}$.
+    \item Xác định độ biến thiên đỉnh-đỉnh (Peak-to-Peak) của cụm mẫu: $\Delta = |T_{\max} - T_{\min}|$.
+    \item So sánh với ngưỡng cho phép (\textbf{Tolerance Threshold}):
+    \begin{itemize}
+        \item Nếu $\Delta < \text{Ngưỡng}$: Tín hiệu ổn định, tính giá trị trung bình cộng $\bar{T} = \frac{1}{5}\sum_{i=1}^{5} T_i$ và cập nhật vào biến toàn cục.
+        \item Nếu $\Delta \ge \text{Ngưỡng}$: Tín hiệu bị nhiễu xung (Spike) hoặc không ổn định, loại bỏ toàn bộ cụm mẫu và giữ nguyên giá trị đo hợp lệ của chu kỳ trước.
+    \end{itemize}
+    \item Giải thích chi tiết cơ sở khoa học lựa chọn ngưỡng lọc và phân tích sự đánh đổi kỹ thuật (Engineering Trade-offs).
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Cơ sở toán học và phân tích lựa chọn ngưỡng lọc}
+Mô hình toán học của bộ lọc trung bình $N = 5$ mẫu được xác định như sau:
+\begin{equation}
+\Delta T = \max_{i=0..4}(T_i) - \min_{i=0..4}(T_i), \qquad \Delta H = \max_{i=0..4}(H_i) - \min_{i=0..4}(H_i)
+\end{equation}
+Điều kiện chấp nhận mẫu dữ liệu:
+\begin{equation}
+(\Delta T < \Delta T_{\text{thresh}}) \quad \land \quad (\Delta H < \Delta H_{\text{thresh}})
+\end{equation}
+Khi điều kiện thỏa mãn, dữ liệu ngõ ra của bộ lọc là:
+\begin{equation}
+T_{\text{out}} = \frac{1}{5}\sum_{i=0}^{4} T_i, \qquad H_{\text{out}} = \frac{1}{5}\sum_{i=0}^{4} H_i
+\end{equation}
+
+\begin{tcolorbox}[
+    colback=blue!4, colframe=blue!70!black, arc=2mm,
+    title=\textbf{Luận giải chuyên sâu: Lựa chọn ngưỡng $\Delta T = 1.5^\circ\text{C}$ và $\Delta H = 3.0\%$}
+]
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Cơ sở vật lý và nhiệt động học}: Nhiệt độ là một đại lượng có quán tính vật lý (Thermal Inertia) rất lớn. Không khí trong phòng thí nghiệm hoặc môi trường công nghiệp không thể thay đổi đột ngột quá $1.5^\circ\text{C}$ chỉ trong khoảng thời gian lấy mẫu vỏn vẹn $500\,\text{ms}$ ($5 \times 100\,\text{ms}$). Nếu trong khoảng thời gian này xuất hiện chênh lệch $\Delta T \ge 1.5^\circ\text{C}$, hiện tượng này chắc chắn bắt nguồn từ nhiễu điện từ trên đường cáp I²C hoặc sự cố chuyển đổi ADC của cảm biến.
+    \item \textbf{Tương tự với độ ẩm}: Dung sai ngưng tụ hơi ẩm trong môi trường không khí tự nhiên có hằng số thời gian tính bằng hàng chục giây. Việc thiết lập ngưỡng $\Delta H = 3.0\%$ loại bỏ triệt để các bước nhảy giả tạo.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Bảng phân tích đánh đổi kỹ thuật (Engineering Trade-offs)}
+Bảng~\ref{tab:trade_offs} tổng hợp các khía cạnh đánh đổi khi thiết lập ngưỡng lọc và kích thước cửa sổ mẫu, được định dạng theo chiều rộng trang chuẩn.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|>{\raggedright\arraybackslash}p{3.8cm}|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}X|}
+\hline
+\textbf{Kịch bản cấu hình} & \textbf{Ưu điểm kỹ thuật} & \textbf{Nhược điểm kỹ thuật} \\
+\hline
+\textbf{Ngưỡng quá nhỏ} ($\Delta T < 0.5^\circ\text{C}$) & Kháng nhiễu cực đoan, loại bỏ triệt để rung & Dễ từ chối nhầm dữ liệu thực; hệ thống bị treo số liệu \\
+\textbf{Ngưỡng quá lớn} ($\Delta T > 3.0^\circ\text{C}$) & Bắt kịp biến động nhanh của môi trường & Cho phép các gai nhiễu lọt qua làm méo mó số đo \\
+\textbf{Ngưỡng chọn} ($\Delta T = 1.5^\circ\text{C}$) & \textbf{Cân bằng tối ưu giữa độ nhạy và kháng nhiễu} & \textbf{Đáp ứng chuẩn môi trường thực tế} \\
+\hline
+\textbf{Cửa sổ mẫu lớn} ($N = 20$) & Dữ liệu cực kỳ mịn, triệt tiêu nhiễu Gauss & Độ trễ tích lũy lớn ($2\,\text{s}$ gom mẫu), tốn bộ nhớ RAM \\
+\textbf{Cửa sổ mẫu nhỏ} ($N = 5$) & \textbf{Độ trễ thấp ($500\,\text{ms}$), chi phí bộ nhớ tối thiểu} & \textbf{Độ làm mịn vừa phải, đáp ứng thời gian thực} \\
+\hline
+\end{tabularx}
+\vspace{0.2cm}
+\caption{Phân tích sự đánh đổi kỹ thuật khi lựa chọn tham số bộ lọc}
+\label{tab:trade_offs}
+\end{table}
+
+\vspace{0.2cm}
+\subsubsection{Mã nguồn hoàn chỉnh chương trình (\texttt{exercise\_4.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_NeoPixel.h>
+#include "DHT20.h"
+#include "LiquidCrystal_I2C.h"
+
+// ============================================================================
+// DINH NGHIA CHAN PHAN CUNG TREN YoloUNO (ESP32-S3)
+// ============================================================================
+#define LED_PIN GPIO_NUM_48 // LED don on-board (GPIO 48)
+#define NEO_PIN 45          // LED NeoPixel RGB (GPIO 45)
+#define LED_COUNT 1         // 1 hat LED NeoPixel
+#define SDA_PIN 11          // I2C SDA (Cong DO)
+#define SCL_PIN 12          // I2C SCL (Cong DO)
+#define LCD_ADDR 33         // Dia chi I2C LCD 16x2 (thap phan 33 = 0x21)
+
+// ============================================================================
+// CAU HINH BO LOC TRUNG BINH (AVERAGE FILTER)
+// ============================================================================
+#define NUM_SAMPLES 5              // Lay 5 mau lien tiep
+#define SAMPLE_INTERVAL_MS 100     // Cach nhau 100ms
+#define THRESHOLD_TEMP_VAR 1.5     // Nguong bien thien nhiet do ( C)
+#define THRESHOLD_HUMI_VAR 3.0     // Nguong bien thien do am (%)
+
+DHT20 dht20;
+LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
+Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+
+volatile float glob_temperature = 0.0;
+volatile float glob_humidity = 0.0;
+
+// ============================================================================
+// TAC VU 1: Doc cam bien ket hop Bo loc trung binh va Kiem tra nguong
+// ============================================================================
+void task_temp_humi_filter(void *pvParameters) {
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  dht20.begin();
+
+  lcd.begin();
+  lcd.backlight();
+  lcd.clear();
+
+  while (1) {
+
+    float temp_samples[NUM_SAMPLES];
+    float humi_samples[NUM_SAMPLES];
+    int valid_count = 0;
+
+    // 1. Thu thap 5 mau cach nhau 100ms
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+
+      if (dht20.read() == 0) {
+        temp_samples[valid_count] = dht20.getTemperature();
+        humi_samples[valid_count] = dht20.getHumidity();
+        valid_count++;
+      }
+
+      vTaskDelay(SAMPLE_INTERVAL_MS);
+    }
+
+    if (valid_count == NUM_SAMPLES) {
+
+      float min_t = temp_samples[0], max_t = temp_samples[0], sum_t = 0;
+      float min_h = humi_samples[0], max_h = humi_samples[0], sum_h = 0;
+
+      for (int i = 0; i < NUM_SAMPLES; i++) {
+
+        if (temp_samples[i] < min_t) min_t = temp_samples[i];
+        if (temp_samples[i] > max_t) max_t = temp_samples[i];
+        sum_t += temp_samples[i];
+
+        if (humi_samples[i] < min_h) min_h = humi_samples[i];
+        if (humi_samples[i] > max_h) max_h = humi_samples[i];
+        sum_h += humi_samples[i];
+      }
+
+      // Do bien thien dinh-dinh (Peak-to-Peak)
+      float delta_temp = max_t - min_t;
+      float delta_humi = max_h - min_h;
+
+      // 2. So sanh voi nguong cho phep
+      if (delta_temp < THRESHOLD_TEMP_VAR && delta_humi < THRESHOLD_HUMI_VAR) {
+
+        // Cap nhat gia tri trung binh neu tin hieu on dinh
+        glob_temperature = sum_t / NUM_SAMPLES;
+        glob_humidity = sum_h / NUM_SAMPLES;
+
+        Serial.print("[FILTER OK] T_avg: ");
+        Serial.print(glob_temperature, 2);
+        Serial.print(" *C | H_avg: ");
+        Serial.print(glob_humidity, 2);
+        Serial.println(" %");
+
+        lcd.setCursor(0, 0);
+        lcd.print("AvgT: ");
+        lcd.print(glob_temperature, 1);
+        lcd.print((char)223);
+        lcd.print("C   ");
+
+        lcd.setCursor(0, 1);
+        lcd.print("AvgH: ");
+        lcd.print(glob_humidity, 1);
+        lcd.print("%   ");
+
+      } else {
+
+        Serial.print("[NOISE REJECTED] Delta T: ");
+        Serial.print(delta_temp, 2);
+        Serial.print(" | Delta H: ");
+        Serial.println(delta_humi, 2);
+      }
+    }
+
+    // Nghi 4.5 giay de chu ky dat ~5s
+    vTaskDelay(4500);
+  }
+}
+
+// ============================================================================
+// TAC VU 2: NeoPixel theo nhiet do da loc
+// ============================================================================
+void task_neopixel(void *pvParameters) {
+
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  while (1) {
+
+    float temp = glob_temperature;
+
+    if (temp < 20.0) {
+      strip.setPixelColor(0, strip.Color(0, 0, 255));
+    } else if (temp < 28.0) {
+      strip.setPixelColor(0, strip.Color(0, 255, 0));
+    } else {
+      strip.setPixelColor(0, strip.Color(255, 0, 0));
+    }
+
+    strip.show();
+    vTaskDelay(1000);
+  }
+}
+
+// ============================================================================
+// TAC VU 3: LED theo do am da loc
+// ============================================================================
+void task_led(void *pvParameters) {
+
+  pinMode(LED_PIN, OUTPUT);
+
+  while (1) {
+
+    float humi = glob_humidity;
+    uint32_t half_period_ms = (humi < 40.0) ? 1000 : ((humi <= 60.0) ? 500 : 250);
+
+    digitalWrite(LED_PIN, HIGH);
+    vTaskDelay(half_period_ms);
+
+    digitalWrite(LED_PIN, LOW);
+    vTaskDelay(half_period_ms);
+  }
+}
+
+// ============================================================================
+// HAM SETUP & KHOI TAO CAC TAC VU FREE RTOS
+// ============================================================================
+void setup() {
+
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_temp_humi_filter,
+      "Temp_Humi_Filter",
+      4096,
+      NULL,
+      2,
+      NULL
+  );
+
+  xTaskCreate(
+      task_neopixel,
+      "Task_NeoPixel",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+
+  xTaskCreate(
+      task_led,
+      "Task_LED_Control",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+}
+
+void loop() {}
+
+\end{lstlisting}
+
+\newpage
+% =============================================================================
+% BÀI 5
+% =============================================================================
+\subsection{Bài 5: Đề xuất bộ lọc nâng cao — Bộ lọc Trung vị kết hợp Lũy thừa (Median + EMA Filter)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Đề xuất và hiện thực một giải pháp thuật toán lọc số nâng cao, giải quyết triệt để các nhược điểm của bộ lọc trung bình số học ở Bài 4.
+    \item Phân tích nguyên lý toán học, công thức tính toán và lập bảng so sánh đa tiêu chí với bộ lọc trung bình đơn giản.
+    \item Hiện thực hóa mã nguồn trên FreeRTOS và đánh giá hiệu năng thực tế.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Hạn chế của bộ lọc trung bình số học và động lực nghiên cứu}
+Mặc dù bộ lọc trung bình cộng (Bài 4) dễ hiện thực, nó bộc lộ hai nhược điểm nghiêm trọng trong môi trường IoT công nghiệp:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Cực kỳ nhạy cảm với ngoại lai (Outlier Sensitivity)}: Nếu xuất hiện chỉ một gai nhiễu biên độ lớn (ví dụ: $T = [25.0, 25.1, 80.0, 25.0, 25.2]$ do nhiễu xung điện từ), giá trị trung bình cộng $\bar{T} = 36.06^\circ\text{C}$ sẽ bị kéo lệch nghiêm trọng, gây kích hoạt báo động sai. Mặc dù cơ chế ngưỡng ở Bài 4 có thể loại bỏ cả cụm, điều này làm mất mát hoàn toàn 5 mẫu dữ liệu và đóng băng hệ thống trong suốt $500\,\text{ms}$.
+    \item \textbf{Độ trễ pha cố định và tốn tài nguyên RAM}: Cần lưu trữ toàn bộ mảng $N$ phần tử trong bộ nhớ.
+\end{enumerate}
+
+\subsubsection{Cơ sở toán học của bộ lọc đề xuất: Phối hợp Median Filter và EMA}
+Để giải quyết bài toán trên, giải pháp đề xuất áp dụng cấu trúc xử lý tín hiệu hai tầng liên hoàn:
+
+\paragraph{Tầng 1: Bộ lọc Trung vị (Median Filter, $N = 5$ mẫu)}
+Thu thập 5 mẫu dữ liệu thô: $\mathcal{X} = \{x_0, x_1, x_2, x_3, x_4\}$. Tiến hành sắp xếp mảng theo thứ tự tăng dần:
+\begin{equation}
+x_{(0)} \le x_{(1)} \le x_{(2)} \le x_{(3)} \le x_{(4)}
+\end{equation}
+Giá trị trung vị được chọn là phần tử nằm chính giữa dãy:
+\begin{equation}
+x_{\text{med}} = x_{(2)}
+\end{equation}
+\textbf{Đặc tính toán học}: Bộ lọc trung vị là một bộ lọc phi tuyến tính (Non-linear Filter) có khả năng loại bỏ \textbf{100\% các nhiễu xung (Impulse / Spike Noise)} mà không làm suy giảm hay méo mó độ dốc của tín hiệu thực. Dù giá trị gai nhiễu có lên tới $+100^\circ\text{C}$, nó sẽ luôn bị đẩy về biên $x_{(4)}$ và bị loại trừ hoàn toàn khỏi kết quả $x_{\text{med}}$.
+
+\paragraph{Tầng 2: Bộ lọc Trung bình động hàm mũ (Exponential Moving Average - EMA)}
+Sau khi loại bỏ hoàn toàn nhiễu xung ở Tầng 1, giá trị $x_{\text{med}}[k]$ được đưa qua bộ lọc thông thấp đệ quy hàm mũ bậc nhất:
+\begin{equation}
+y[k] = \alpha \cdot x_{\text{med}}[k] + (1 - \alpha) \cdot y[k-1]
+\end{equation}
+Trong đó:
+\begin{itemize}[leftmargin=*]
+    \item $y[k]$: Giá trị tín hiệu ngõ ra sau lọc tại chu kỳ $k$.
+    \item $y[k-1]$: Giá trị tín hiệu ngõ ra của chu kỳ trước đó ($k-1$).
+    \item $\alpha \in (0, 1]$: Hệ số trơn (Smoothing Factor). Ta lựa chọn $\alpha = 0.3$.
+\end{itemize}
+
+\textbf{Phân tích đặc tính kỹ thuật của hệ số $\alpha = 0.3$}:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Hằng số thời gian tương đương}: $\tau \approx \frac{\Delta t}{\alpha} = \frac{0.5\,\text{s}}{0.3} \approx 1.67\,\text{giây}$. Hằng số thời gian này hoàn toàn tương thích với tốc độ biến thiên nhiệt ẩm tự nhiên của phòng kín.
+    \item \textbf{Hệ số suy giảm phương sai nhiễu (Noise Variance Reduction Ratio)}:
+    \begin{equation}
+    \frac{\sigma^2_{\text{out}}}{\sigma^2_{\text{in}}} = \frac{\alpha}{2 - \alpha} = \frac{0.3}{2 - 0.3} = \frac{0.3}{1.7} \approx 0.176
+    \end{equation}
+    Điều này đồng nghĩa với việc bộ lọc EMA làm giảm phương sai nhiễu ngẫu nhiên lên tới \textbf{82.4\%}, mang lại đường đặc tuyến phẳng và cực kỳ mịn.
+    \item \textbf{Độ phức tạp bộ nhớ $O(1)$}: Khác với bộ lọc trung bình trượt cần lưu trữ cả mảng, EMA chỉ cần lưu duy nhất một biến tĩnh \texttt{ema\_temp} trong RAM.
+\end{itemize}
+
+\vspace{0.2cm}
+\subsubsection{Bảng ma trận so sánh toàn diện đa tiêu chí}
+Bảng~\ref{tab:filter_comparison} so sánh đối sánh giữa Dữ liệu thô, Bộ lọc trung bình (Bài 4) và Bộ lọc đề xuất Median + EMA (Bài 5). Toàn bộ nội dung bảng được tự động dàn đều trong khổ văn bản.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|>{\raggedright\arraybackslash}p{3.0cm}|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}X|}
+\hline
+\textbf{Tiêu chí kỹ thuật} & \textbf{Dữ liệu thô (Raw)} & \textbf{Lọc trung bình (Bài 4)} & \textbf{Đề xuất: Median + EMA (Bài 5)} \\
+\hline
+\textbf{Kháng gai nhiễu (Spike)} & Không (Chấp nhận hết) & Kém (Dễ bị lệch trung bình) & \textbf{Tuyệt đối (Loại bỏ 100\% Outlier)} \\
+\textbf{Tổn thất mẫu khi có lỗi} & Không có & Mất cả 5 mẫu ($500\,\text{ms}$) & \textbf{0\% (Vẫn giữ được giá trị trung vị)} \\
+\textbf{Độ mịn tín hiệu} & Nhấp nhô, dao động & Tương đối mịn & \textbf{Rất mịn, đường đặc tuyến phẳng} \\
+\textbf{Bộ nhớ RAM tiêu thụ} & $0\,\text{bytes}$ & Lưu mảng $N$ phần tử & \textbf{Chỉ cần 1 biến quá khứ ($O(1)$)} \\
+\textbf{Độ phức tạp tính toán} & $O(1)$ & $O(N)$ phép cộng & $O(N \log N)$ sắp xếp + $O(1)$ EMA \\
+\textbf{Khả năng thích ứng} & Không có & Cố định theo $N$ & \textbf{Linh hoạt qua việc chỉnh $\alpha$} \\
+\hline
+\end{tabularx}
+\vspace{0.2cm}
+\caption{Ma trận so sánh hiệu năng giữa các giải pháp lọc số tín hiệu cảm biến}
+\label{tab:filter_comparison}
+\end{table}
+
+\vspace{0.2cm}
+\subsubsection{Mã nguồn hoàn chỉnh chương trình (\texttt{exercise\_5.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_NeoPixel.h>
+#include "DHT20.h"
+#include "LiquidCrystal_I2C.h"
+
+// ============================================================================
+// DINH NGHIA CHAN PHAN CUNG TREN YoloUNO (ESP32-S3)
+// ============================================================================
+#define LED_PIN GPIO_NUM_48 // LED don on-board (GPIO 48)
+#define NEO_PIN 45          // LED NeoPixel RGB (GPIO 45)
+#define LED_COUNT 1         // 1 hat LED NeoPixel
+#define SDA_PIN 11          // I2C SDA (Cong DO)
+#define SCL_PIN 12          // I2C SCL (Cong DO)
+#define LCD_ADDR 33         // Dia chi I2C LCD 16x2 (thap phan 33 = 0x21)
+
+// ============================================================================
+// THAM SO BO LOC NANG CAO: MEDIAN FILTER + EXPONENTIAL MOVING AVERAGE (EMA)
+// ============================================================================
+#define FILTER_WINDOW 5       // Kich thuoc cua so loc trung vi (5 mau)
+#define SAMPLE_DELAY_MS 100   // Khoang cach giua cac mau 100ms
+#define EMA_ALPHA 0.3f        // He so lam muot ham mu (0 < alpha <= 1)
+
+DHT20 dht20;
+LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
+Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+
+volatile float glob_temperature = 0.0;
+volatile float glob_humidity = 0.0;
+
+// Ham tinh gia tri trung vi (Median Filter) - Loai bo 100% nhieu xung di biet
+float compute_median_5(float arr[5]) {
+
+  float sorted[5];
+  for (int i = 0; i < 5; i++) sorted[i] = arr[i];
+
+  for (int i = 0; i < 4; i++) {
+    for (int j = i + 1; j < 5; j++) {
+      if (sorted[i] > sorted[j]) {
+        float temp = sorted[i];
+        sorted[i] = sorted[j];
+        sorted[j] = temp;
+      }
+    }
+  }
+
+  return sorted[2]; // Tra ve phan tu trung vi o chinh giua
+}
+
+// ============================================================================
+// TAC VU 1: Doc cam bien ket hop Bo loc nang cao (Median + EMA)
+// ============================================================================
+void task_advanced_filter(void *pvParameters) {
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  dht20.begin();
+
+  lcd.begin();
+  lcd.backlight();
+  lcd.clear();
+
+  float ema_temp = 0.0;
+  float ema_humi = 0.0;
+  bool is_first_run = true;
+
+  while (1) {
+
+    float raw_temps[FILTER_WINDOW];
+    float raw_humis[FILTER_WINDOW];
+    int valid_count = 0;
+
+    // 1. Thu thap 5 mau cach nhau 100ms
+    for (int i = 0; i < FILTER_WINDOW; i++) {
+
+      if (dht20.read() == 0) {
+        raw_temps[valid_count] = dht20.getTemperature();
+        raw_humis[valid_count] = dht20.getHumidity();
+        valid_count++;
+      }
+
+      vTaskDelay(SAMPLE_DELAY_MS);
+    }
+
+    if (valid_count == FILTER_WINDOW) {
+
+      // TANG 1: Loc trung vi de khu nhieu xung (Spike noise)
+      float med_temp = compute_median_5(raw_temps);
+      float med_humi = compute_median_5(raw_humis);
+
+      // TANG 2: Loc lam muot ham mu (EMA): y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+      if (is_first_run) {
+
+        ema_temp = med_temp;
+        ema_humi = med_humi;
+        is_first_run = false;
+
+      } else {
+
+        ema_temp = EMA_ALPHA * med_temp + (1.0f - EMA_ALPHA) * ema_temp;
+        ema_humi = EMA_ALPHA * med_humi + (1.0f - EMA_ALPHA) * ema_humi;
+      }
+
+      glob_temperature = ema_temp;
+      glob_humidity = ema_humi;
+
+      Serial.print("[MEDIAN+EMA] Out_T: ");
+      Serial.print(glob_temperature, 2);
+      Serial.print(" *C | Out_H: ");
+      Serial.print(glob_humidity, 2);
+      Serial.println(" %");
+
+      lcd.setCursor(0, 0);
+      lcd.print("AdvT: ");
+      lcd.print(glob_temperature, 1);
+      lcd.print((char)223);
+      lcd.print("C   ");
+
+      lcd.setCursor(0, 1);
+      lcd.print("AdvH: ");
+      lcd.print(glob_humidity, 1);
+      lcd.print("%   ");
+    }
+
+    // Nghi 4.5 giay
+    vTaskDelay(4500);
+  }
+}
+
+// ============================================================================
+// TAC VU 2: NeoPixel theo nhiet do da loc
+// ============================================================================
+void task_neopixel(void *pvParameters) {
+
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  while (1) {
+
+    float temp = glob_temperature;
+
+    if (temp < 20.0) {
+      strip.setPixelColor(0, strip.Color(0, 0, 255));
+    } else if (temp < 28.0) {
+      strip.setPixelColor(0, strip.Color(0, 255, 0));
+    } else {
+      strip.setPixelColor(0, strip.Color(255, 0, 0));
+    }
+
+    strip.show();
+    vTaskDelay(1000);
+  }
+}
+
+// ============================================================================
+// TAC VU 3: LED theo do am da loc
+// ============================================================================
+void task_led(void *pvParameters) {
+
+  pinMode(LED_PIN, OUTPUT);
+
+  while (1) {
+
+    float humi = glob_humidity;
+    uint32_t half_period_ms = (humi < 40.0) ? 1000 : ((humi <= 60.0) ? 500 : 250);
+
+    digitalWrite(LED_PIN, HIGH);
+    vTaskDelay(half_period_ms);
+
+    digitalWrite(LED_PIN, LOW);
+    vTaskDelay(half_period_ms);
+  }
+}
+
+// ============================================================================
+// HAM SETUP & KHOI TAO CAC TAC VU FREE RTOS
+// ============================================================================
+void setup() {
+
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_advanced_filter,
+      "Task_Adv_Filter",
+      4096,
+      NULL,
+      2,
+      NULL
+  );
+
+  xTaskCreate(
+      task_neopixel,
+      "Task_NeoPixel",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+
+  xTaskCreate(
+      task_led,
+      "Task_LED_Control",
+      2048,
+      NULL,
+      1,
+      NULL
+  );
+}
+
+void loop() {}
+
+\end{lstlisting}
+
+\subsubsection{Mô phỏng dữ liệu thực nghiệm kiểm chứng thuật toán}
+Để minh chứng cho sức mạnh vượt trội của thuật toán đề xuất, Bảng~\ref{tab:sim_noise} mô phỏng phản ứng của các giải pháp khi xuất hiện một xung nhiễu đột ngột $T = 65.0^\circ\text{C}$ (do phóng tĩnh điện trên dây I²C) trong chuỗi mẫu nhiệt độ phòng thực tế ($25^\circ\text{C}$).
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|>{\centering\arraybackslash}p{1.4cm}|>{\centering\arraybackslash}p{2.1cm}|>{\centering\arraybackslash}p{2.1cm}|>{\centering\arraybackslash}p{2.1cm}|>{\centering\arraybackslash}p{2.4cm}|>{\raggedright\arraybackslash}X|}
+\hline
+\textbf{Mẫu thứ} & \textbf{Dữ liệu thô ($T_{\text{raw}}$)} & \textbf{Lọc TB (Bài 4)} & \textbf{Median ($x_{\text{med}}$)} & \textbf{Median+EMA (Bài 5)} & \textbf{Đánh giá hành vi} \\
+\hline
+$k-2$ & $25.1^\circ\text{C}$ & $25.10^\circ\text{C}$ & $25.1^\circ\text{C}$ & $25.08^\circ\text{C}$ & Trạng thái ổn định \\
+$k-1$ & $25.0^\circ\text{C}$ & $25.05^\circ\text{C}$ & $25.0^\circ\text{C}$ & $25.05^\circ\text{C}$ & Trạng thái ổn định \\
+\rowcolor{red!10}
+\textbf{$k$ (Gai)} & \textbf{$65.0^\circ\text{C}$ (Spike!)} & \textbf{Hủy mẫu (Treo số)} & \textbf{$25.2^\circ\text{C}$} & \textbf{$25.10^\circ\text{C}$} & \textbf{Median triệt tiêu hoàn toàn gai!} \\
+$k+1$ & $25.2^\circ\text{C}$ & $25.15^\circ\text{C}$ & $25.2^\circ\text{C}$ & $25.13^\circ\text{C}$ & Tiếp tục mượt mà \\
+$k+2$ & $25.1^\circ\text{C}$ & $25.12^\circ\text{C}$ & $25.1^\circ\text{C}$ & $25.12^\circ\text{C}$ & Không có sai lệch dư thừa \\
+\hline
+\end{tabularx}
+\vspace{0.2cm}
+\caption{Kết quả mô phỏng phản ứng của các bộ lọc khi xuất hiện xung nhiễu gai}
+\label{tab:sim_noise}
+\end{table}
+
+\newpage
+\section{Đánh Giá Kết Quả và Kết Luận (Lab 3)}
+
+\subsection{Tổng kết kết quả đạt được}
+Thông qua việc hoàn thành xuất sắc toàn bộ 5 bài tập thực hành trong Lab 3, nhóm sinh viên đã làm chủ các nội dung học thuật và kỹ năng thực nghiệm then chốt:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Làm chủ chuẩn giao tiếp I²C}: Đã cấu hình và kết nối đồng thời nhiều thiết bị ngoại vi trên cùng một bus 2 dây SDA (GPIO 11) và SCL (GPIO 12), giải mã thành công địa chỉ \texttt{0x38} (cảm biến DHT20) và \texttt{0x21} (màn hình LCD 16x2 qua IC PCF8574).
+    \item \textbf{Lập trình đa nhiệm thời gian thực FreeRTOS}: Phân tách thành công hệ thống thành các luồng xử lý độc lập với các chu kỳ khác nhau ($0.25\,\text{s} - 5\,\text{s}$), đồng bộ hóa an toàn qua biến dùng chung \texttt{volatile} mà không làm nghẽn xung nhịp CPU.
+    \item \textbf{Phản hồi thị giác đa tầng}: Kết hợp trực quan hóa đa kênh qua dải màu sắc NeoPixel (Xanh dương / Xanh lá / Đỏ) và tần số nhấp nháy LED đơn (Chậm / Vừa / Nhanh), mang lại trải nghiệm tương tác thân thiện cho người dùng.
+    \item \textbf{Cơ chế bảo an thông minh (Fail-Safe \& Self-Healing)}: Xây dựng khả năng chống chịu sự cố vật lý, tự động phát hiện mất kết nối I²C, đưa hệ thống vào trạng thái báo động khẩn cấp và tự phục hồi ngay khi cảm biến được kết nối lại.
+    \item \textbf{Đột phá trong giải thuật lọc số}: Phân tích định lượng dung sai ngưỡng cho bộ lọc trung bình và hiện thực thành công giải thuật kết hợp \textbf{Bộ lọc Trung vị (Median Filter)} và \textbf{Bộ lọc Trung bình động hàm mũ (EMA)}, chứng minh tính ưu việt vượt trội về khả năng kháng nhiễu xung và tối ưu hóa bộ nhớ vi điều khiển.
+\end{enumerate}
+
+\subsection{Ưu thế của kiến trúc phần mềm Module hóa}
+Trong quá trình triển khai dự án, nhóm đã áp dụng mô hình tổ chức mã nguồn hướng đối tượng và module hóa chặt chẽ theo cấu trúc thư mục tiêu chuẩn PlatformIO:
+\begin{itemize}[leftmargin=*]
+    \item \texttt{include/global.h} \& \texttt{src/global.cpp}: Định nghĩa tài nguyên phần cứng tập trung và biến toàn cục chia sẻ.
+    \item \texttt{include/temp\_humi\_monitor.h} \& \texttt{src/temp\_humi\_monitor.cpp}: Đóng gói toàn bộ logic đo đạc I²C, xử lý thuật toán lọc số và điều khiển màn hình LCD.
+    \item \texttt{include/neopixel\_control.h} \& \texttt{src/neopixel\_control.cpp}: Đóng gói tác vụ điều khiển chuỗi màu sắc và nhấp nháy cảnh báo NeoPixel.
+    \item \texttt{include/led\_control.h} \& \texttt{src/led\_control.cpp}: Quản lý tác vụ điều biến tần số nhấp nháy đèn LED GPIO 48.
+\end{itemize}
+Cấu trúc này giúp mã nguồn có tính kế thừa cao, dễ bảo trì, dễ kiểm thử đơn vị (Unit Testing) và sẵn sàng tích hợp với các tầng giao thức truyền thông mạng không dây (Wi-Fi, MQTT, CoreIOT) trong các bài thực hành tiếp theo.
