@@ -1,153 +1,181 @@
-# INTERNET VẠN VẬT (IoT) - YOLO:UNO ESP32-S3
+# 🌐 INTERNET VẠN VẬT (IoT) - YOLO:UNO ESP32-S3
+### Hệ thống Thực hành IoT: Từ Thiết bị Biên đến Điện toán Đám mây
 
-Khoa Khoa học và Kỹ thuật Máy tính - Trường Đại học Bách Khoa, ĐHQG-HCM  
-Môn học: Internet vạn vật (CO3061 / CO3062)  
-Nền tảng phần cứng: Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-core Xtensa LX7 @ 240 MHz)  
-Môi trường phát triển: PlatformIO IDE (Arduino Core for ESP32 / FreeRTOS)  
-
----
-
-## 1. Tổng quan dự án
-
-Repository này chứa toàn bộ tài liệu thiết kế, mã nguồn mẫu và kiến trúc thực hành cho khóa học Internet vạn vật (IoT). Khóa học hướng tới việc xây dựng hệ sinh thái IoT toàn diện từ thiết bị biên (Edge Devices) đến hạ tầng điện toán đám mây (Cloud IoT Platforms), bao gồm:
-- Giao thức truyền thông mạng công nghiệp nhẹ MQTT (Message Queuing Telemetry Transport) và nền tảng quản lý CoreIOT / ThingsBoard.
-- Lập trình nhúng điều khiển ngoại vi GPIO, đèn thông minh NeoPixel RGB (WS2812B) và đa nhiệm thời gian thực FreeRTOS.
-- Giao tiếp truyền thông nối tiếp I2C với cảm biến môi trường DHT20 và màn hình hiển thị LCD 1602.
-- Xây dựng máy chủ nhúng bất đồng bộ (Embedded Asynchronous Web Server) phục vụ RESTful API JSON, giám sát Dashboard và cập nhật firmware từ xa qua mạng (OTA Update).
-- Thiết kế và tích hợp hệ thống IoT thực tế trong Đồ án cuối kỳ (Capstone Assignment).
+> **Trường Đại học Bách Khoa - ĐHQG-HCM**  
+> **Khoa Khoa học và Kỹ thuật Máy tính**  
+> **Môn học:** Internet vạn vật (CO3061 / CO3062)  
+> **Sinh viên thực hiện:** Võ Phạm (MSSV: 2313946)  
+> **Nền tảng phần cứng:** Kit Yolo:UNO (ESP32-S3 WROOM-1, Dual-Core Xtensa LX7 @ 240MHz)  
+> **Môi trường phát triển:** PlatformIO IDE (Framework Arduino for ESP32 & FreeRTOS)
 
 ---
 
-## 2. Cấu trúc phân nhánh (Git Branching Strategy)
-
-Mã nguồn của dự án được phân bổ khoa học thành các nhánh tương ứng với từng giai đoạn học tập và phát triển:
-
-| Tên nhánh | Nội dung chuyên biệt | Mục tiêu đào tạo |
-| :--- | :--- | :--- |
-| `main` | Nhánh gốc chứa tài liệu tổng quan, kiến trúc toàn khóa và đặc tả phần cứng Yolo:UNO. | Tham chiếu chung toàn khóa |
-| `lab1_coreiot` (hoặc `lab1`) | Nền tảng IoT Cloud & Giao thức MQTT (CoreIOT, Telemetry, RPC hai chiều, Dashboard). | Điện toán đám mây & MQTT |
-| `lab2_gpio_neopixel` (hoặc `lab2`) | Lập trình nhúng IoT & Đa nhiệm FreeRTOS trên ESP32 (GPIO LED, WS2812B, Non-blocking timing). | Lập trình phần cứng & RTOS |
-| `lab3_dht20_lcd` (hoặc `lab3`) | Giao tiếp cảm biến I2C & Hiển thị (Cảm biến nhiệt ẩm DHT20, LCD 1602, Bảo an Fail-Safe). | Giao thức I2C & Cảm biến |
-| `lab4_webserver` (hoặc `lab4`) | Embedded Web Server & RESTful API (ESPAsyncWebServer, Moving Average, Hysteresis, OTA). | Web Server & Mạng không dây |
-| `assignment` | Đồ án Hệ thống IoT hoàn chỉnh (Smart Farm / Smart Home / Giám sát môi trường). | Đồ án tổng hợp (Capstone) |
-
----
-
-## 3. Đặc tả phần cứng Bo mạch Yolo:UNO
-
-Kit Yolo:UNO là bo mạch phát triển IoT tiêu chuẩn được trang bị vi điều khiển thế hệ mới ESP32-S3:
-
-### 3.1. Thông số kỹ thuật vi điều khiển ESP32-S3
-- Lõi xử lý: Dual-core 32-bit Xtensa LX7 hoạt động ở tần số lên đến 240 MHz.
-- Tập lệnh hỗ trợ: Vector Instructions phục vụ tăng tốc tính toán AI/DSP.
-- Bộ nhớ:
-  - ROM: 384 KB (Bootloader và lõi hệ thống).
-  - SRAM: 512 KB (Bộ nhớ nội).
-  - External SPI Flash: 8 MB.
-  - External PSRAM: 8 MB (Octal SPI).
-- Kết nối không dây:
-  - Wi-Fi: 802.11 b/g/n (2.4 GHz) hỗ trợ chế độ Station (STA) và SoftAP.
-  - Bluetooth: Bluetooth 5.0 Low Energy (BLE) và Bluetooth Mesh.
-
-### 3.2. Bảng ánh xạ chân ngoại vi trên Yolo:UNO (Pinout Mapping)
-
-| Ngoại vi / Tín hiệu | Chân GPIO ESP32-S3 | Chức năng & Định dạng logic |
-| :--- | :--- | :--- |
-| Onboard User LED | `GPIO 13` | Digital Output, Active-High |
-| Onboard NeoPixel RGB | `GPIO 6` | Single-wire 800 kHz protocol (WS2812B) |
-| I2C Serial Data (SDA) | `GPIO 11` | Giao tiếp I2C (DHT20, LCD 1602, RTC) |
-| I2C Serial Clock (SCL) | `GPIO 12` | Xung nhịp I2C (100 kHz standard / 400 kHz fast) |
-| Cổng Console Debug | USB-C (Native CDC / UART0) | Giám sát Serial Monitor (Baudrate: 115200) |
+## 📖 Mục lục
+- [1. Tổng quan dự án](#1-tổng-quan-dự-án)
+- [2. Cấu trúc phân nhánh Git (Branching Strategy)](#2-cấu-trúc-phân-nhánh-git-branching-strategy)
+- [3. Tóm tắt nội dung các bài thí nghiệm](#3-tóm-tắt-nội-dung-các-bài-thí-nghiệm)
+  - [Lab 1: Nền tảng IoT Cloud & Giao thức MQTT](#-lab-1-nền-tảng-iot-cloud--giao-thức-mqtt)
+  - [Lab 2: Lập trình nhúng & Đa nhiệm FreeRTOS](#-lab-2-lập-trình-nhúng--đa-nhiệm-freertos)
+  - [Lab 3: Giao tiếp I2C & Cảnh báo đa tầng](#-lab-3-giao-tiếp-i2c--cảnh-báo-đa-tầng)
+  - [Lab 4: Embedded Web Server & RESTful API](#-lab-4-embedded-web-server--restful-api)
+  - [Assignment: Đồ án hệ thống IoT tổng hợp](#-assignment-đồ-án-hệ-thống-iot-tổng-hợp)
+- [4. Đặc tả phần cứng Bo mạch Yolo:UNO](#4-đặc-tả-phần-cứng-bo-mạch-yolouno)
+- [5. Hướng dẫn cài đặt & Khởi chạy](#5-hướng-dẫn-cài-đặt--khởi-chạy)
+- [6. Tài liệu tham khảo](#6-tài-liệu-tham-khảo)
 
 ---
 
-## 4. Yêu cầu môi trường và Cài đặt
+## 🎯 1. Tổng quan dự án
 
-### 4.1. Công cụ phát triển (IDE & Toolchain)
-- Trình soạn thảo mã nguồn: Visual Studio Code.
-- Môi trường phát triển nhúng: Extension **PlatformIO IDE**.
-- Framework biên dịch: `framework = arduino` với `platform = espressif32`.
-- Trình thông dịch Python: Python 3.9+ (phục vụ chạy script MQTT kiểm thử cho Lab 1).
+Repository này lưu trữ toàn bộ mã nguồn, cấu hình phần cứng và báo cáo thực nghiệm cho môn học **Internet vạn vật (IoT)** tại Trường ĐH Bách Khoa - ĐHQG-HCM. Dự án được xây dựng theo mô hình kiến trúc phân tầng chuẩn công nghiệp:
 
-### 4.2. File cấu hình `platformio.ini` tiêu chuẩn
-Mọi dự án trong các lab sử dụng file cấu hình mẫu sau:
+- **Tầng Thiết bị biên (Edge Perception Layer):** Thu thập dữ liệu từ cảm biến nhiệt độ, độ ẩm kỹ thuật số (DHT20), xử lý tín hiệu số (Bộ lọc trung bình trượt, thuật toán trễ Hysteresis) và điều khiển cơ cấu chấp hành (LED đơn, NeoPixel WS2812B RGB, màn hình LCD 1602).
+- **Tầng Mạng & Giao thức (Network Layer):** Vận hành mạng Wi-Fi (chế độ kép Station & SoftAP), giao thức truyền thông nhẹ MQTT (Publish/Subscribe) và máy chủ HTTP bất đồng bộ (AsyncTCP).
+- **Tầng Ứng dụng & Đám mây (Cloud & Application Layer):** Tích hợp nền tảng đám mây CoreIOT (ThingsBoard), Web Dashboard trực quan hóa dữ liệu chuỗi thời gian, điều khiển từ xa hai chiều (Two-Way RPC) và cập nhật phần mềm không dây (OTA Update).
 
-```ini
-[env:yolo_uno]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
-monitor_speed = 115200
-upload_speed = 921600
+---
 
-build_flags = 
-    -DARDUINO_USB_MODE=1
-    -DARDUINO_USB_CDC_ON_BOOT=1
+## 🌿 2. Cấu trúc phân nhánh Git (Branching Strategy)
 
-lib_deps = 
-    adafruit/Adafruit NeoPixel @ ^1.12.0
-    robtillaart/DHT20 @ ^0.3.1
-    marcoschwartz/LiquidCrystal_I2C @ ^1.1.4
-    bblanchon/ArduinoJson @ ^6.21.4
-    me-no-dev/ESPAsyncWebServer @ ^3.6.0
-    me-no-dev/AsyncTCP @ ^3.3.2
-    knolleary/PubSubClient @ ^2.8
-    ayushsharma82/ElegantOTA @ ^3.1.6
+Mỗi bài thí nghiệm được quản lý độc lập trên một nhánh Git chuyên biệt, hoàn chỉnh từ mã nguồn đến tài liệu báo cáo:
+
+| Nhánh Git | Nội dung kỹ thuật | Nền tảng & Giao thức | Báo cáo hoàn chỉnh |
+| :--- | :--- | :--- | :---: |
+| **`main`** | Tổng quan hệ thống, tài liệu tham chiếu toàn khóa & đặc tả Yolo:UNO | Markdown / Docs | — |
+| [**`lab1_coreiot`**](https://github.com/vophamk23/Internet-Of-Thing-YOLO-UNO-ESP32-S3/tree/lab1_coreiot) | IoT Cloud CoreIOT, MQTT Broker, Telemetry Streaming, Two-Way RPC | Python 3 / MQTT / Cloud | PDF & LaTeX |
+| [**`lab2_gpio_neopixel`**](https://github.com/vophamk23/Internet-Of-Thing-YOLO-UNO-ESP32-S3/tree/lab2_gpio_neopixel) | GPIO Driver, NeoPixel WS2812B RGB, Đa nhiệm FreeRTOS, Non-blocking | ESP32-S3 / FreeRTOS / PlatformIO | PDF & LaTeX |
+| [**`lab3_dht20_lcd`**](https://github.com/vophamk23/Internet-Of-Thing-YOLO-UNO-ESP32-S3/tree/lab3_dht20_lcd) | Giao thức I2C, Cảm biến DHT20, Màn hình LCD 1602, Cơ chế Fail-Safe | ESP32-S3 / I2C Bus / PlatformIO | PDF & LaTeX |
+| [**`lab4_webserver`**](https://github.com/vophamk23/Internet-Of-Thing-YOLO-UNO-ESP32-S3/tree/lab4_webserver) | Embedded Web Server, RESTful API, Moving Average, Hysteresis, OTA | ESP32-S3 / AsyncWebServer / OTA | PDF & LaTeX |
+| [**`assignment`**](https://github.com/vophamk23/Internet-Of-Thing-YOLO-UNO-ESP32-S3/tree/assignment) | Đồ án tích hợp hệ thống IoT hoàn chỉnh cuối khóa | ESP32-S3 / Full-stack IoT | Đồ án cuối kỳ |
+
+---
+
+## 📚 3. Tóm tắt nội dung các bài thí nghiệm
+
+### ☁️ Lab 1: Nền tảng IoT Cloud & Giao thức MQTT
+- **Trọng tâm:** Kết nối thiết bị giả lập Python với máy chủ `app.coreiot.io:1883` qua giao thức MQTT.
+- **Tính năng chính:**
+  - Xác thực bảo mật bằng Device Access Token riêng biệt.
+  - Gửi Telemetry chu kỳ 3 giây/lần với định dạng JSON (nhiệt độ, độ ẩm, ánh sáng).
+  - Điều khiển hai chiều thời gian thực thông qua cơ chế Remote Procedure Call (RPC).
+  - Thiết kế Visualization Dashboard (Gauges, Cards, Time-series Charts) và xuất bản Public URL.
+
+---
+
+### ⚡ Lab 2: Lập trình nhúng & Đa nhiệm FreeRTOS
+- **Trọng tâm:** Xóa bỏ hoàn toàn hàm dừng `delay()` gây nghẽn CPU, chuyển sang đa nhiệm thực sự với FreeRTOS.
+- **Tính năng chính:**
+  - Nhấp nháy LED đơn bất đối xứng (1s ON / 2s OFF) bằng `vTaskDelay()`.
+  - Phối hợp nhịp nhàng giữa LED13 và đèn thông minh NeoPixel qua biến dùng chung `volatile`.
+  - Vận hành song song 2 tác vụ độc lập chạy lệch pha mà không bị giật nhịp.
+  - Máy trạng thái tuần tự hiển thị chuỗi 5 dải màu RGB 24-bit (3 giây/màu).
+
+---
+
+### 📡 Lab 3: Giao tiếp I2C & Cảnh báo đa tầng
+- **Trọng tâm:** Truyền thông nối tiếp đồng bộ I2C 2 dây (`SDA` / `SCL`) với cảm biến DHT20 và màn hình LCD 1602.
+- **Tính năng chính:**
+  - Thu thập thông số môi trường chính xác, kiểm tra mã sai số Checksum (CRC).
+  - Phân tầng chỉ thị cảnh báo: NeoPixel đổi màu theo dải nhiệt độ, LED đơn điều biến tốc độ chớp theo độ ẩm.
+  - Hiển thị trực quan giao diện người - máy (HMI) trên LCD 1602 qua chip PCF8574.
+  - Cơ chế bảo an công nghiệp (*Fail-Safe FSM*): Tự động phát hiện đứt cáp I2C, kích hoạt báo động khẩn cấp và tự phục hồi khi có tín hiệu.
+
+---
+
+### 🌐 Lab 4: Embedded Web Server & RESTful API
+- **Trọng tâm:** Xây dựng máy chủ Web bất đồng bộ phục vụ REST API JSON trực tiếp trên vi điều khiển.
+- **Tính năng chính:**
+  - Chế độ mạng kép `WIFI_AP_STA`: Vừa phát SoftAP để cấu hình, vừa làm Station kết nối Router.
+  - Bộ lọc trung bình trượt (*Moving Average 10 mẫu*) triệt tiêu xung nhiễu đột biến của cảm biến.
+  - Thuật toán trễ (*1.0% Hysteresis*) chống rung lật trạng thái độ ẩm.
+  - Cơ chế đồng bộ dữ liệu Dual-Core an toàn giữa `sensor_task` và `internet_task` bằng FreeRTOS Mutex.
+  - Tích hợp công cụ nâng cấp phần mềm qua mạng không dây (*Over-The-Air - ElegantOTA*).
+
+---
+
+### 🚀 Assignment: Đồ án hệ thống IoT tổng hợp
+- Tích hợp trọn vẹn chuỗi công nghệ từ vi điều khiển ESP32-S3 đến máy chủ đám mây, xây dựng giải pháp IoT hoàn chỉnh đáp ứng tiêu chuẩn đồ án môn học.
+
+---
+
+## 🔌 4. Đặc tả phần cứng Bo mạch Yolo:UNO
+
+Kit **Yolo:UNO** là bo mạch phát triển IoT tiêu chuẩn trang bị vi điều khiển hiệu năng cao **ESP32-S3 WROOM-1**:
+
+### 4.1. Thông số kỹ thuật vi điều khiển ESP32-S3
+- **Lõi xử lý:** Dual-Core 32-bit Xtensa LX7 hoạt động ở xung nhịp tối đa **240 MHz**.
+- **Tập lệnh mở rộng:** Vector Instructions hỗ trợ tăng tốc xử lý tính toán số học và AI/DSP.
+- **Bộ nhớ:**
+  - **SRAM nội:** 512 KB (320 KB khả dụng cho ứng dụng người dùng).
+  - **Flash SPI ngoài:** 8 MB (QIO mode tốc độ cao).
+  - **ROM:** 384 KB lưu trữ Bootloader và nhân hệ thống.
+- **Kết nối không dây:** Wi-Fi 802.11 b/g/n (2.4 GHz) & Bluetooth 5.0 Low Energy (BLE) / Bluetooth Mesh.
+
+### 4.2. Bảng phân bố chân ngoại vi chuẩn (Pinout Mapping)
+
+| Ngoại vi / Tín hiệu | Chân GPIO ESP32-S3 | Chế độ hoạt động | Chức năng kỹ thuật |
+| :--- | :--- | :--- | :--- |
+| **Onboard User LED** | `GPIO 13` | Digital Output | LED đơn báo hiệu trạng thái hệ thống |
+| **Onboard NeoPixel RGB** | `GPIO 6` | Single-wire (800 kHz) | IC WS2812B tích hợp LED 5050 RGB |
+| **I2C SDA (Data)** | `GPIO 11` | Bidirectional Open-Drain | Đường truyền dữ liệu cảm biến DHT20 & LCD |
+| **I2C SCL (Clock)** | `GPIO 12` | Output Clock | Xung nhịp đồng bộ I2C (100 kHz) |
+| **Nút nhấn BOOT** | `GPIO 0` | Input Pull-up | Chuyển chế độ nạp hoặc reset cấu hình mạng |
+| **Cổng nạp & Console** | USB-C | Native USB CDC / UART | Nạp code và theo dõi nhật ký (115200 bps) |
+
+---
+
+## 💻 5. Hướng dẫn cài đặt & Khởi chạy
+
+### 5.1. Sao chép kho mã nguồn
+```bash
+# Clone repository về máy tính
+git clone https://github.com/vophamk23/Internet-Of-Thing-YOLO-UNO-ESP32-S3.git
+cd Internet-Of-Thing-YOLO-UNO-ESP32-S3
 ```
 
----
-
-## 5. Hướng dẫn sử dụng Repository
-
-### 5.1. Clone mã nguồn
-```bash
-git clone https://github.com/vophamk23/INTERNET-OF-THINGS.git
-cd INTERNET-OF-THINGS
-```
-
-### 5.2. Chuyển đổi giữa các nhánh
-Để làm việc với từng bài thực hành cụ thể, sử dụng lệnh checkout của Git:
+### 5.2. Chuyển đổi giữa các nhánh bài thực hành
+Mỗi bài lab được đóng gói hoàn chỉnh trên nhánh tương ứng:
 
 ```bash
-# Xem danh sách toàn bộ các nhánh
+# Liệt kê tất cả các nhánh
 git branch -a
 
-# Chuyển sang Lab 1: Nền tảng Cloud CoreIOT & MQTT
-git checkout lab1_coreiot    # hoặc: git checkout lab1
+# Làm việc với Lab 1: Cloud CoreIOT & MQTT
+git checkout lab1_coreiot
 
-# Chuyển sang Lab 2: Lập trình nhúng GPIO & NeoPixel
-git checkout lab2_gpio_neopixel    # hoặc: git checkout lab2
+# Làm việc với Lab 2: GPIO & NeoPixel FreeRTOS
+git checkout lab2_gpio_neopixel
 
-# Chuyển sang Lab 3: Cảm biến I2C DHT20 & LCD 1602
-git checkout lab3_dht20_lcd    # hoặc: git checkout lab3
+# Làm việc với Lab 3: Cảm biến I2C DHT20 & LCD 1602
+git checkout lab3_dht20_lcd
 
-# Chuyển sang Lab 4: Embedded Web Server & RESTful API
-git checkout lab4_webserver    # hoặc: git checkout lab4
+# Làm việc với Lab 4: Embedded Web Server & RESTful API
+git checkout lab4_webserver
 
-# Chuyển sang Assignment: Đồ án hệ thống IoT cuối kỳ
+# Làm việc với Đồ án cuối kỳ
 git checkout assignment
 ```
 
-### 5.3. Quy trình biên dịch và nạp chương trình với PlatformIO
-Từ thư mục gốc của từng dự án:
+### 5.3. Quy trình biên dịch và nạp với PlatformIO
+Từ thư mục của bài lab tương ứng (Lab 2, Lab 3, Lab 4):
 
 ```bash
-# Biên dịch mã nguồn
+# 1. Biên dịch mã nguồn cho bo mạch Yolo:UNO
 pio run
 
-# Nạp firmware vào bo mạch Yolo:UNO
+# 2. Nạp firmware qua cổng USB-C
 pio run --target upload
 
-# Mở cửa sổ Serial Monitor để theo dõi nhật ký hệ thống
-pio device monitor
+# 3. Mở Serial Monitor để giám sát nhật ký hoạt động
+pio device monitor -b 115200
 ```
 
 ---
 
-## 6. Danh mục tài liệu tham khảo
+## 📖 6. Tài liệu tham khảo
 
-1. ESP32-S3 Technical Reference Manual: Espressif Systems.
-2. PlatformIO Documentation: https://docs.platformio.org/
-3. CoreIOT / ThingsBoard IoT Platform Documentation: https://thingsboard.io/docs/
-4. FreeRTOS Real-time Kernel Documentation: https://www.freertos.org/
-5. Giáo trình Thực hành Internet vạn vật - Khoa KH&KT Máy tính, ĐH Bách Khoa TP.HCM.
+1. **Espressif Systems:** [ESP32-S3 Technical Reference Manual](https://www.espressif.com/en/products/socs/esp32s3)
+2. **PlatformIO:** [PlatformIO IDE Documentation](https://docs.platformio.org/)
+3. **CoreIOT / ThingsBoard:** [ThingsBoard IoT Platform Documentation](https://thingsboard.io/docs/)
+4. **FreeRTOS:** [FreeRTOS Real-time Kernel Reference Manual](https://www.freertos.org/)
+5. **Khoa KH&KT Máy tính - ĐH Bách Khoa TP.HCM:** *Giáo trình Thực hành Internet vạn vật (CO3061 / CO3062)*.
