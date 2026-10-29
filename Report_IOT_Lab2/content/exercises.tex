@@ -1,0 +1,654 @@
+\setcounter{table}{0}
+\section{Tổng Quan và Mục Tiêu Bài Thực Hành 2}
+
+\subsection{Giới thiệu}
+Bài thực hành 2 tập trung vào việc nghiên cứu và ứng dụng hệ điều hành thời gian thực \textbf{FreeRTOS} trên vi điều khiển 32-bit kiến trúc lõi kép \textbf{ESP32-S3} (bo mạch YoloUNO) trong môi trường phát triển PlatformIO / VS Code. Sinh viên được làm quen với các khái niệm nền tảng trong lập trình nhúng chuyên nghiệp:
+\begin{itemize}
+    \item \textbf{Đa nhiệm chiếm ưu thế (Preemptive Multitasking):} Khả năng phân chia thời gian CPU cho nhiều luồng thực thi độc lập dựa trên mức ưu tiên (Priority).
+    \item \textbf{Cơ chế định thời phi phong tỏa (\texttt{vTaskDelay}):} Đưa tác vụ vào trạng thái \textit{Blocked} trong khoảng thời gian xác định, giải phóng tài nguyên CPU cho các tác vụ khác hoặc \textit{Idle Task} nhằm tiết kiệm năng lượng.
+    \item \textbf{Đồng bộ hóa dữ liệu liên tác vụ (Inter-Task Communication):} Sử dụng từ khóa \texttt{volatile} đối với các biến toàn cục dùng chung để đảm bảo tính toàn vẹn dữ liệu, ngăn ngừa trình biên dịch tối ưu hóa sai lệch qua thanh ghi CPU.
+    \item \textbf{Thiết kế máy trạng thái hữu hạn (FSM):} Ứng dụng điều khiển hệ thống đèn giao thông nhiều pha kết hợp chỉ thị nhịp tim hệ thống (\textit{Heartbeat}).
+\end{itemize}
+
+\subsection{Mục tiêu bài thực hành}
+\begin{enumerate}
+    \item Khởi tạo và cấu hình tham số cho các tác vụ FreeRTOS thông qua hàm \texttt{xTaskCreate()} (gồm hàm thực thi, tên tác vụ, dung lượng Stack, tham số truyền, mức ưu tiên và task handle).
+    \item Điều khiển ngoại vi xuất tín hiệu số: LED đơn tích hợp trên bo mạch (GPIO 48) và đèn LED thông minh RGB NeoPixel WS2812B (GPIO 45).
+    \item Phối hợp và đồng bộ hóa trạng thái hoạt động giữa hai tác vụ chạy song song thông qua biến cờ dùng chung.
+    \item Xây dựng các tác vụ bất đồng bộ với chu kỳ hoạt động độc lập và máy trạng thái đèn giao thông tuần tự.
+\end{enumerate}
+
+\subsection{Bảng ánh xạ phần cứng trên bo mạch YoloUNO (ESP32-S3)}
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|>{\raggedright\arraybackslash}p{3.5cm}|>{\centering\arraybackslash}p{2.0cm}|>{\raggedright\arraybackslash}p{3.8cm}|>{\raggedright\arraybackslash}X|}
+\hline
+\textbf{Tên ngoại vi} & \textbf{Chân GPIO} & \textbf{Giao thức / Điện áp} & \textbf{Ý nghĩa điều khiển} \\
+\hline
+LED đơn tích hợp (On-board) & GPIO 48 & Digital Output (3.3V) & Mức HIGH (1): SÁNG; Mức LOW (0): TẮT \\
+LED RGB NeoPixel WS2812B & GPIO 45 & One-wire NRZ (800 kHz) & Điều khiển màu sắc độc lập qua giao thức 24-bit GRB \\
+Cổng nạp \& USB Serial CDC & Native USB & UART / COM (115200) & Ghi nhận log thực nghiệm và nạp firmware \\
+\hline
+\end{tabularx}
+\vspace{0.2cm}
+\caption{Bảng ánh xạ chân ngoại vi sử dụng trong Lab 2}
+\label{tab:hardware_iot_lab2}
+\end{table}
+
+\newpage
+\section{Nội Dung Chi Tiết Các Bài Tập Thực Hành}
+
+% =============================================================================
+% BÀI 1
+% =============================================================================
+\subsection{Bài 1: Nhấp nháy luân phiên đơn giản (LED SÁNG 1s / TẮT 2s)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Hiện thực tác vụ \texttt{task\_led\_blinky} sao cho LED trên board SÁNG trong 1 giây và TẮT trong 2 giây.
+    \item Chỉ chạy duy nhất tác vụ này và quan sát LED nhấp nháy trên phần cứng.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Biểu đồ thời gian hoạt động (Timing Diagram)}
+Chu kỳ hoạt động toàn phần là $T = T_{\text{ON}} + T_{\text{OFF}} = 1\text{s} + 2\text{s} = 3\text{s}$, với hệ số công tác (Duty Cycle) $D = \frac{1}{3} \approx 33.3\%$.
+
+\begin{center}
+\begin{tikzpicture}[scale=0.85]
+    % Trục thời gian
+    \draw[->, thick] (0,0) -- (13,0) node[right] {$t$ (giây)};
+    \draw[->, thick] (0,0) -- (0,2.5) node[above] {Mức logic LED};
+    
+    % Đường tín hiệu
+    \draw[blue, ultra thick] (0,1.8) -- (3,1.8) -- (3,0) -- (9,0) -- (9,1.8) -- (12,1.8);
+    \draw[blue, dashed] (0,0) -- (0,1.8);
+    \draw[blue, dashed] (3,0) -- (3,1.8);
+    \draw[blue, dashed] (9,0) -- (9,1.8);
+    
+    % Nhãn thời gian
+    \node[below] at (0,0) {$0$};
+    \node[below] at (3,0) {$1\text{s}$};
+    \node[below] at (9,0) {$3\text{s}$};
+    \node[below] at (12,0) {$4\text{s}$};
+    
+    % Nhãn mức logic
+    \node[left] at (0,1.8) {HIGH (SÁNG)};
+    \node[left] at (0,0) {LOW (TẮT)};
+    
+    % Chú thích chu kỳ
+    \draw[<->, thick, red] (0,2.2) -- (3,2.2) node[midway, above] {$T_{\text{ON}} = 1\text{s}$};
+    \draw[<->, thick, red] (3,2.2) -- (9,2.2) node[midway, above] {$T_{\text{OFF}} = 2\text{s}$};
+    \draw[<->, thick, black] (0,-0.8) -- (9,-0.8) node[midway, below] {Chu kỳ $T = 3\text{s}$};
+\end{tikzpicture}
+\end{center}
+
+\subsubsection{Mã nguồn hoàn chỉnh (\texttt{exercise\_1.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Arduino.h>
+
+#define LED_PIN GPIO_NUM_48 // LED on-board YoloUNO (GPIO 48)
+
+// Tac vu 1: Nhap nhay LED don (SANG 1 giay, TAT 2 giay)
+void task_led_blinky(void *pvParameters) {
+  pinMode(LED_PIN, OUTPUT);
+  while (1) {
+    digitalWrite(LED_PIN, HIGH);
+    vTaskDelay(1000); // Sang 1 giay
+
+    digitalWrite(LED_PIN, LOW);
+    vTaskDelay(2000); // Tat 2 giay
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_led_blinky,   // Ham tac vu
+      "Task_LED_Blinky", // Ten tac vu
+      2048,              // Stack depth (bytes)
+      NULL,              // Tham so truyen vao
+      1,                 // Do uu tien (Priority)
+      NULL               // Task handle
+  );
+}
+
+void loop() {
+  // FreeRTOS quan ly tac vu, loop() de trong
+}
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Cơ chế FreeRTOS}
+\begin{itemize}
+    \item \textbf{Cấu hình tác vụ:} Hàm \texttt{xTaskCreate()} cấp phát một khối bộ nhớ ngăn xếp (Stack) dung lượng 2048 bytes trong vùng nhớ Heap của ESP32-S3 để lưu trữ ngữ cảnh tác vụ (Task Context: thanh ghi CPU, biến cục bộ). Mức ưu tiên được đặt là 1.
+    \item \textbf{Cơ chế định thời \texttt{vTaskDelay()}:} Trên ESP32 Arduino Core, tần số ngắt nhịp của hệ điều hành (\texttt{configTICK\_RATE\_HZ}) được thiết lập mặc định là 1000 Hz, tương đương mỗi tick hệ thống là 1 ms. Do đó, lời gọi \texttt{vTaskDelay(1000)} làm trễ đúng 1000 ticks (1 giây).
+    \item \textbf{Giải phóng CPU:} Khác với hàm \texttt{delay()} truyền thống làm nghẽn luồng xử lý bằng vòng lặp bận (Busy-waiting), \texttt{vTaskDelay()} lập tức đưa tác vụ vào trạng thái \textit{Blocked}. Bộ lập lịch (Scheduler) lập tức chuyển quyền điều khiển CPU cho các luồng nền (\textit{IDLE task}) để thực hiện các công việc dọn dẹp bộ nhớ và tiết kiệm điện năng.
+\end{itemize}
+
+\newpage
+% =============================================================================
+% BÀI 2
+% =============================================================================
+\subsection{Bài 2: Phối hợp LED và NeoPixel (Đồng bộ qua biến dùng chung)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Hiện thực \texttt{task\_led\_blinky} với mẫu SÁNG 2 s, TẮT 2 s.
+    \item Hiện thực \texttt{task\_neo\_blinky} để bật NeoPixel màu ĐỎ khi LED SÁNG, và TẮT (ĐEN) khi LED TẮT.
+    \item Sử dụng một biến dùng chung để phối hợp và đồng bộ hóa giữa hai tác vụ.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Mô hình đồng bộ hóa dữ liệu liên tác vụ}
+\begin{center}
+\begin{tikzpicture}[node distance=1.8cm, auto]
+    \node [draw, rectangle, fill=blue!10, rounded corners, minimum width=4cm, minimum height=1.2cm, align=center] (task1) 
+        {\textbf{Task 1: LED Blinky}\\\small (Điều khiển GPIO 48, chu kỳ 4s)};
+    
+    \node [draw, diamond, fill=yellow!20, aspect=2, below=of task1, align=center] (shared) 
+        {\textbf{\texttt{volatile bool led\_state}}\\\small (Biến cờ đồng bộ)};
+        
+    \node [draw, rectangle, fill=green!10, rounded corners, minimum width=4cm, minimum height=1.2cm, below=of shared, align=center] (task2) 
+        {\textbf{Task 2: Neo Blinky}\\\small (Lấy mẫu mỗi 50ms, điều khiển GPIO 45)};
+        
+    \draw [->, ultra thick, blue] (task1) -- node[right] {\small Ghi trạng thái (\texttt{true}/\texttt{false})} (shared);
+    \draw [->, ultra thick, green!50!black] (shared) -- node[right] {\small Đọc cờ và xuất màu ĐỎ/TẮT} (task2);
+\end{tikzpicture}
+\end{center}
+
+\subsubsection{Mã nguồn hoàn chỉnh (\texttt{exercise\_2.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Adafruit_NeoPixel.h>
+#include <Arduino.h>
+
+#define LED_PIN GPIO_NUM_48 // LED on-board YoloUNO (GPIO 48)
+#define NEO_PIN 45          // NeoPixel data pin (GPIO 45)
+#define LED_COUNT 1         // 1 LED NeoPixel
+
+// Bien chia se trang thai dong bo giua 2 tac vu
+volatile bool led_state = false;
+
+// Tac vu 1: Dieu khien LED don (SANG 2s, TAT 2s) va cap nhat bien led_state
+void task_led_blinky(void *pvParameters) {
+  pinMode(LED_PIN, OUTPUT);
+  while (1) {
+    digitalWrite(LED_PIN, HIGH);
+    led_state = true; // Bao trang thai LED dang SANG
+    vTaskDelay(2000);
+
+    digitalWrite(LED_PIN, LOW);
+    led_state = false; // Bao trang thai LED dang TAT
+    vTaskDelay(2000);
+  }
+}
+
+// Tac vu 2: Dieu khien NeoPixel theo bien led_state (DO khi LED SANG, TAT khi LED TAT)
+void task_neo_blinky(void *pvParameters) {
+  Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  while (1) {
+    if (led_state) {
+      strip.setPixelColor(0, strip.Color(255, 0, 0)); // Bat DO khi LED SANG
+    } else {
+      strip.setPixelColor(0, strip.Color(0, 0, 0));   // TAT khi LED TAT
+    }
+    strip.show();
+    vTaskDelay(50); // Kiem tra lai sau 50ms
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_led_blinky,   // Ham tac vu
+      "Task_LED_Blinky", // Ten tac vu
+      2048,              // Stack depth (bytes)
+      NULL,              // Tham so truyen vao
+      1,                 // Do uu tien (Priority)
+      NULL               // Task handle
+  );
+
+  xTaskCreate(
+      task_neo_blinky,   // Ham tac vu
+      "Task_NEO_Blinky", // Ten tac vu
+      2048,              // Stack depth (bytes)
+      NULL,              // Tham so truyen vao
+      1,                 // Do uu tien (Priority)
+      NULL               // Task handle
+  );
+}
+
+void loop() {}
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Cơ chế FreeRTOS}
+\begin{itemize}
+    \item \textbf{Tầm quan trọng của từ khóa \texttt{volatile}:} Trong hệ thống đa nhiệm đa lõi, nếu không khai báo \texttt{volatile}, trình biên dịch (GCC) sẽ tối ưu hóa vòng lặp của \texttt{task\_neo\_blinky} bằng cách đọc biến \texttt{led\_state} vào một thanh ghi CPU nội bộ và tái sử dụng giá trị đó liên tục. Từ khóa \texttt{volatile} bắt buộc CPU phải đọc trực tiếp từ bộ nhớ RAM mỗi khi truy cập, đảm bảo thay đổi từ \texttt{task\_led\_blinky} được phản ánh ngay lập tức sang \texttt{task\_neo\_blinky}.
+    \item \textbf{Tần số lấy mẫu trong tác vụ NeoPixel:} \texttt{task\_neo\_blinky} thực hiện chu kỳ thăm dò (\textit{Polling}) ngắn $50\text{ ms}$. Khoảng thời gian $50\text{ ms}$ là đủ nhỏ để mắt người cảm nhận sự đồng bộ tức thời giữa LED đơn và NeoPixel (độ trễ thị giác tối đa chỉ 0.05 giây), đồng thời vẫn giải phóng tới hơn $98\%$ thời gian CPU nhờ \texttt{vTaskDelay(50)}.
+\end{itemize}
+
+\newpage
+% =============================================================================
+% BÀI 3
+% =============================================================================
+\subsection{Bài 3: Các mẫu nhấp nháy độc lập (Independent Blink Patterns)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Hiện thực \texttt{task\_led\_blinky} với chu kỳ SÁNG 1,5 s / TẮT 0,5 s.
+    \item Hiện thực \texttt{task\_neo\_blinky} để NeoPixel lần lượt chuyển qua ĐỎ (1 s), XANH LÁ (2 s) và XANH DƯƠNG (2 s), lặp lại liên tục.
+    \item Cả hai tác vụ phải chạy hoàn toàn độc lập, bất kể trạng thái của tác vụ còn lại.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Biểu đồ thời gian bất đồng bộ (Asynchronous Timing)}
+Chu kỳ của LED đơn là $T_{\text{LED}} = 1.5\text{s} + 0.5\text{s} = 2.0\text{s}$. Chu kỳ của NeoPixel là $T_{\text{NEO}} = 1\text{s} + 2\text{s} + 2\text{s} = 5.0\text{s}$. Bội chung nhỏ nhất của hai chu kỳ là $\text{BCNN}(2, 5) = 10\text{s}$. Sau mỗi 10 giây, toàn bộ mẫu kết hợp của cả hai tác vụ mới lặp lại vị trí pha ban đầu.
+
+\begin{center}
+\begin{tikzpicture}[scale=0.85]
+    % Trục thời gian
+    \draw[->, thick] (0,0) -- (12.5,0) node[right] {$t$ (giây)};
+    
+    % Kênh 1: LED
+    \draw[blue, ultra thick] (0,2.5) -- (1.5,2.5) -- (1.5,1.5) -- (2.0,1.5) 
+                             -- (2.0,2.5) -- (3.5,2.5) -- (3.5,1.5) -- (4.0,1.5)
+                             -- (4.0,2.5) -- (5.5,2.5) -- (5.5,1.5) -- (6.0,1.5)
+                             -- (6.0,2.5) -- (7.5,2.5) -- (7.5,1.5) -- (8.0,1.5)
+                             -- (8.0,2.5) -- (9.5,2.5) -- (9.5,1.5) -- (10.0,1.5);
+    \node[left] at (0,2.0) {\small \textbf{LED đơn (GPIO 48)}};
+    
+    % Kênh 2: NeoPixel
+    \fill[red!80] (0,0.3) rectangle (1.0,0.9);
+    \fill[green!80!black] (1.0,0.3) rectangle (3.0,0.9);
+    \fill[blue!80] (3.0,0.3) rectangle (5.0,0.9);
+    
+    \fill[red!80] (5.0,0.3) rectangle (6.0,0.9);
+    \fill[green!80!black] (6.0,0.3) rectangle (8.0,0.9);
+    \fill[blue!80] (8.0,0.3) rectangle (10.0,0.9);
+    
+    \draw[thick] (0,0.3) rectangle (10.0,0.9);
+    \node[left] at (0,0.6) {\small \textbf{NeoPixel (GPIO 45)}};
+    
+    % Nhãn màu
+    \node[white, font=\tiny\bfseries] at (0.5,0.6) {ĐỎ};
+    \node[white, font=\tiny\bfseries] at (2.0,0.6) {XANH LÁ};
+    \node[white, font=\tiny\bfseries] at (4.0,0.6) {X.DƯƠNG};
+    
+    % Vạch thời gian
+    \foreach \x in {0,1,2,3,4,5,6,7,8,9,10} {
+        \draw (\x,0) -- (\x,-0.15) node[below, font=\scriptsize] {\x s};
+    }
+    
+    \draw[<->, dashed, black] (0,-0.8) -- (10,-0.8) node[midway, below, font=\small] {Chu kỳ lặp toàn phần BCNN$(2, 5) = 10\text{ giây}$};
+\end{tikzpicture}
+\end{center}
+
+\subsubsection{Mã nguồn hoàn chỉnh (\texttt{exercise\_3.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Adafruit_NeoPixel.h>
+#include <Arduino.h>
+
+#define LED_PIN GPIO_NUM_48 // LED on-board YoloUNO (GPIO 48)
+#define NEO_PIN 45          // NeoPixel data pin (GPIO 45)
+#define LED_COUNT 1         // 1 LED NeoPixel
+
+// Tac vu 1: Nhap nhay LED doc lap (SANG 1.5s, TAT 0.5s)
+void task_led_blinky(void *pvParameters) {
+  pinMode(LED_PIN, OUTPUT);
+  while (1) {
+    digitalWrite(LED_PIN, HIGH);
+    vTaskDelay(1500); // Sang 1.5s
+
+    digitalWrite(LED_PIN, LOW);
+    vTaskDelay(500);  // Tat 0.5s
+  }
+}
+
+// Tac vu 2: NeoPixel chuyen mau doc lap (DO 1s -> XANH LA 2s -> XANH DUONG 2s)
+void task_neo_blinky(void *pvParameters) {
+  Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  while (1) {
+    strip.setPixelColor(0, strip.Color(255, 0, 0)); // DO 1 giay
+    strip.show();
+    vTaskDelay(1000);
+
+    strip.setPixelColor(0, strip.Color(0, 255, 0)); // XANH LA 2 giay
+    strip.show();
+    vTaskDelay(2000);
+
+    strip.setPixelColor(0, strip.Color(0, 0, 255)); // XANH DUONG 2 giay
+    strip.show();
+    vTaskDelay(2000);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_led_blinky,   // Ham tac vu
+      "Task_LED_Blinky", // Ten tac vu
+      2048,              // Stack depth (bytes)
+      NULL,              // Tham so truyen vao
+      1,                 // Do uu tien (Priority)
+      NULL               // Task handle
+  );
+
+  xTaskCreate(
+      task_neo_blinky,   // Ham tac vu
+      "Task_NEO_Blinky", // Ten tac vu
+      2048,              // Stack depth (bytes)
+      NULL,              // Tham so truyen vao
+      1,                 // Do uu tien (Priority)
+      NULL               // Task handle
+  );
+}
+
+void loop() {}
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Cơ chế FreeRTOS}
+\begin{itemize}
+    \item \textbf{Thực thi độc lập (Decoupled Execution):} Không có bất kỳ biến chung hay điểm nghẽn nào giữa hai tác vụ. Bộ lập lịch FreeRTOS duy trì hai đồng hồ định thời độc lập trong hàng đợi trễ (\textit{Delayed Task List}).
+    \item \textbf{Cơ chế Round-Robin trên cùng mức ưu tiên:} Cả hai tác vụ được gán cùng mức ưu tiên là 1 (\texttt{uxPriority = 1}). Khi cả hai cùng sẵn sàng (\textit{Ready}), bộ lập lịch chia sẻ lát cắt thời gian (\textit{Time-slicing}) công bằng thông qua ngắt SysTick, đảm bảo tính thời gian thực chính xác tuyệt đối mà không bên nào bị chiếm quyền quá mức.
+\end{itemize}
+
+\newpage
+% =============================================================================
+% BÀI 4
+% =============================================================================
+\subsection{Bài 4: Chuỗi màu NeoPixel nâng cao (Cầu vồng 5 màu, mỗi màu 3s)}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item Giữ \texttt{task\_led\_blinky} nhấp nháy theo mẫu SÁNG 2 s, TẮT 2 s.
+    \item Tạo tác vụ mới \texttt{task\_neo\_rainbow} cho NeoPixel lần lượt chuyển qua năm màu khác nhau: ĐỎ, VÀNG, XANH LÁ, XANH NGỌC (Cyan), XANH DƯƠNG; mỗi màu duy trì đúng trong 3 giây.
+    \item Tất cả tác vụ chạy đồng thời; LED và NeoPixel không được đồng bộ với nhau.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Bảng ánh xạ mã màu RGB cho chuỗi 5 màu cầu vồng}
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{|>{\centering\arraybackslash}p{1.2cm}|>{\raggedright\arraybackslash}X|>{\centering\arraybackslash}p{2.2cm}|>{\centering\arraybackslash}p{2.2cm}|>{\centering\arraybackslash}p{2.2cm}|>{\centering\arraybackslash}p{2.4cm}|}
+\hline
+\textbf{STT} & \textbf{Tên màu hiển thị} & \textbf{Giá trị Red (R)} & \textbf{Giá trị Green (G)} & \textbf{Giá trị Blue (B)} & \textbf{Thời gian giữ} \\
+\hline
+0 & ĐỎ (Red) & 255 & 0 & 0 & 3 giây \\
+1 & VÀNG (Yellow) & 255 & 255 & 0 & 3 giây \\
+2 & XANH LÁ (Green) & 0 & 255 & 0 & 3 giây \\
+3 & XANH NGỌC (Cyan) & 0 & 255 & 255 & 3 giây \\
+4 & XANH DƯƠNG (Blue) & 0 & 0 & 255 & 3 giây \\
+\hline
+\end{tabularx}
+\vspace{0.2cm}
+\caption{Bảng mã màu RGB và thời gian duy trì của chuỗi màu cầu vồng}
+\end{table}
+
+\subsubsection{Mã nguồn hoàn chỉnh (\texttt{exercise\_4.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Adafruit_NeoPixel.h>
+#include <Arduino.h>
+
+#define LED_PIN GPIO_NUM_48 // LED on-board YoloUNO (GPIO 48)
+#define NEO_PIN 45          // NeoPixel data pin (GPIO 45)
+#define LED_COUNT 1         // 1 LED NeoPixel
+
+// Cau truc RGB Color
+struct RGBColor {
+  uint8_t r, g, b;
+};
+
+// Mang 5 mau cau vong
+const RGBColor rainbowColors[5] = {
+    {255, 0, 0},   // DO
+    {255, 255, 0}, // VANG
+    {0, 255, 0},   // XANH LA
+    {0, 255, 255}, // XANH NGOC (Cyan)
+    {0, 0, 255}    // XANH DUONG
+};
+
+// Tac vu 1: LED don nhap nhay SANG 2s, TAT 2s
+void task_led_blinky(void *pvParameters) {
+  pinMode(LED_PIN, OUTPUT);
+  while (1) {
+    digitalWrite(LED_PIN, HIGH);
+    vTaskDelay(2000);
+
+    digitalWrite(LED_PIN, LOW);
+    vTaskDelay(2000);
+  }
+}
+
+// Tac vu 2: NeoPixel chuyen 5 mau cau vong, moi mau giu 3 giay (3000 ms)
+void task_neo_rainbow(void *pvParameters) {
+  Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  int colorIndex = 0;
+
+  while (1) {
+    RGBColor c = rainbowColors[colorIndex];
+    strip.setPixelColor(0, strip.Color(c.r, c.g, c.b));
+    strip.show();
+
+    vTaskDelay(3000); // Giu 3 giay
+
+    // Chuyen sang mau tiep theo tuan hoan
+    colorIndex = (colorIndex + 1) % 5;
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_led_blinky,   // Ham tac vu
+      "Task_LED_Blinky", // Ten tac vu
+      2048,              // Stack depth (bytes)
+      NULL,              // Tham so truyen vao
+      1,                 // Do uu tien (Priority)
+      NULL               // Task handle
+  );
+
+  xTaskCreate(
+      task_neo_rainbow,  // Ham tac vu
+      "Task_NEO_Rainbow", // Ten tac vu
+      2048,              // Stack depth (bytes)
+      NULL,              // Tham so truyen vao
+      1,                 // Do uu tien (Priority)
+      NULL               // Task handle
+  );
+}
+
+void loop() {}
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Cơ chế FreeRTOS}
+\begin{itemize}
+    \item \textbf{Mô hình lập trình hướng dữ liệu (Data-driven):} Thay vì viết mã lặp lại 5 lần lời gọi \texttt{strip.setPixelColor()} và \texttt{vTaskDelay()}, việc sử dụng cấu trúc \texttt{struct RGBColor} kết hợp mảng hằng số \texttt{rainbowColors[5]} và phép toán modulo \texttt{(colorIndex + 1) \% 5} giúp mã nguồn cực kỳ tinh gọn, tối ưu kích thước bộ nhớ Flash và dễ mở rộng.
+    \item \textbf{Tính toán tương quan chu kỳ:} Chu kỳ của chuỗi màu cầu vồng là $T_{\text{Rainbow}} = 5 \times 3\text{s} = 15\text{s}$. Chu kỳ của LED đơn là $T_{\text{LED}} = 2\text{s} + 2\text{s} = 4\text{s}$. Bội chung nhỏ nhất $\text{BCNN}(4, 15) = 60\text{ giây}$. Nghĩa là cứ sau đúng 1 phút, hai thiết bị ngoại vi mới quay lại cùng pha ban đầu (LED bắt đầu SÁNG đồng thời NeoPixel bắt đầu chuyển màu ĐỎ).
+\end{itemize}
+
+\newpage
+% =============================================================================
+% BÀI 5
+% =============================================================================
+\subsection{Bài 5: Mô phỏng hệ thống đèn giao thông với nhịp tim Heartbeat}
+
+\begin{tcolorbox}[
+    enhanced, colback=black!2, colframe=black!60, boxrule=1pt, arc=2.5mm, drop shadow,
+    attach boxed title to top left={xshift=4mm, yshift=-3mm},
+    boxed title style={enhanced, colback=black!85, colframe=black!85, boxrule=1pt, arc=2.5mm, drop shadow, left=6pt, right=6pt, top=2pt, bottom=2pt},
+    title=\textcolor{white}{\large\textbf{Yêu cầu đề bài (Trích phiếu bài tập)}}
+]
+\bfseries
+\vspace{0.2cm}
+\begin{itemize}
+    \item \textbf{Tác vụ 1 (\texttt{task\_led\_blinky})}: LED trên board đóng vai trò nhịp tim hệ thống (\textit{Heartbeat}) — SÁNG 1 giây, rồi TẮT 1 giây, lặp liên tục.
+    \item \textbf{Tác vụ 2 (\texttt{task\_traffic\_light})}: NeoPixel đóng vai trò đèn tín hiệu giao thông, lặp vô hạn theo chu kỳ:
+    \begin{itemize}
+        \item ĐỎ: duy trì trong 7 giây.
+        \item VÀNG (AMBER): duy trì trong 2 giây.
+        \item XANH: duy trì trong 5 giây.
+    \end{itemize}
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.2cm}
+\subsubsection{Mô hình máy trạng thái hữu hạn (FSM) Đèn Giao Thông}
+\begin{center}
+\begin{tikzpicture}[->, >=stealth', shorten >=1pt, auto, node distance=3.2cm, semithick]
+    \node[circle, draw=red!80, fill=red!20, text=red!80!black, font=\bfseries, align=center] (RED) 
+        {ĐÈN ĐỎ\\(7 giây)};
+    \node[circle, draw=orange!80, fill=orange!20, text=orange!80!black, font=\bfseries, align=center, right=of RED] (YELLOW) 
+        {ĐÈN VÀNG\\(2 giây)};
+    \node[circle, draw=green!80!black, fill=green!20, text=green!80!black, font=\bfseries, align=center, below right=2.2cm and 0.2cm of RED] (GREEN) 
+        {ĐÈN XANH\\(5 giây)};
+
+    \path (RED) edge [bend left=20] node[above] {\small Hết 7s} (YELLOW)
+          (YELLOW) edge [bend left=20] node[right] {\small Hết 2s} (GREEN)
+          (GREEN) edge [bend left=20] node[left] {\small Hết 5s} (RED);
+\end{tikzpicture}
+\end{center}
+
+\subsubsection{Mã nguồn hoàn chỉnh (\texttt{exercise\_5.cpp})}
+\begin{lstlisting}[language=C++]
+#include <Adafruit_NeoPixel.h>
+#include <Arduino.h>
+
+#define LED_PIN GPIO_NUM_48 // LED on-board YoloUNO (GPIO 48)
+#define NEO_PIN 45          // NeoPixel data pin (GPIO 45)
+#define LED_COUNT 1         // 1 LED NeoPixel
+
+// Cau truc pha den giao thong (Mau sac va thoi gian sang)
+struct TrafficPhase {
+  uint8_t r, g, b;
+  uint32_t duration_ms;
+};
+
+// Chuoi trang thai den giao thong: DO 7s -> VANG 2s -> XANH 5s
+const TrafficPhase trafficPhases[3] = {
+    {255, 0, 0, 7000},   // Den DO: 7 giay
+    {255, 180, 0, 2000}, // Den VANG (Amber): 2 giay
+    {0, 255, 0, 5000}    // Den XANH: 5 giay
+};
+
+// Tac vu 1: Nhip tim he thong (SANG 1 giay / TAT 1 giay)
+void task_led_blinky(void *pvParameters) {
+  pinMode(LED_PIN, OUTPUT);
+
+  while (1) {
+    digitalWrite(LED_PIN, HIGH); // Heartbeat SANG 1s
+    vTaskDelay(1000);
+
+    digitalWrite(LED_PIN, LOW);  // Heartbeat TAT 1s
+    vTaskDelay(1000);
+  }
+}
+
+// Tac vu 2: Den giao thong tuan tu theo chu ky
+void task_traffic_light(void *pvParameters) {
+  Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
+  strip.begin();
+  strip.clear();
+  strip.show();
+
+  int phase = 0;
+
+  while (1) {
+    TrafficPhase p = trafficPhases[phase];
+    strip.setPixelColor(0, strip.Color(p.r, p.g, p.b));
+    strip.show();
+
+    vTaskDelay(p.duration_ms); // Giu mau theo thoi gian quy dinh cua tung pha
+
+    // Chuyen sang pha tiep theo trong chu ky (Do -> Vang -> Xanh -> Do...)
+    phase = (phase + 1) % 3;
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  xTaskCreate(
+      task_led_blinky,      // Ham tac vu
+      "Task_LED_Heartbeat", // Ten tac vu
+      2048,                 // Stack depth (bytes)
+      NULL,                 // Tham so truyen vao
+      1,                    // Do uu tien (Priority)
+      NULL                  // Task handle
+  );
+
+  xTaskCreate(
+      task_traffic_light,   // Ham tac vu
+      "Task_Traffic_Light", // Ten tac vu
+      2048,                 // Stack depth (bytes)
+      NULL,                 // Tham so truyen vao
+      1,                    // Do uu tien (Priority)
+      NULL                  // Task handle
+  );
+}
+
+void loop() {}
+\end{lstlisting}
+
+\subsubsection{Phân tích kỹ thuật \& Ý nghĩa hệ thống}
+\begin{itemize}
+    \item \textbf{Cấu trúc \texttt{TrafficPhase}:} Việc thiết kế cấu trúc dữ liệu gồm cả 3 kênh màu RGB và tham số thời gian \texttt{duration\_ms} biến tác vụ \texttt{task\_traffic\_light} thành một bộ thực thi bảng điều khiển (\textit{Table-driven state machine}). Điều này giúp dễ dàng tái cấu hình thời gian đèn (ví dụ kéo dài đèn đỏ giờ cao điểm) mà không cần can thiệp logic mã lệnh.
+    \item \textbf{Ý nghĩa của tín hiệu nhịp tim (\textit{Heartbeat}):} Trong các thiết bị nhúng công nghiệp và IoT thực tế, khi hệ thống gặp lỗi treo (Deadlock, HardFault hoặc rò rỉ bộ nhớ), bộ vi điều khiển thường bị đơ. Tín hiệu LED nhấp nháy 1s/1s đều đặn là minh chứng trực quan xác nhận bộ lập lịch FreeRTOS đang hoạt động hoàn toàn khỏe mạnh. Nếu đèn nhịp tim ngừng nháy, kỹ sư lập tức nhận biết hệ thống đã gặp sự cố nghiêm trọng mà không cần mở máy tính gỡ lỗi.
+\end{itemize}
+
+\newpage
+\section{Kết Luận và Bài Học Kinh Nghiệm (Lab 2)}
+
+Qua quá trình thực nghiệm 5 bài tập của Bài thực hành 2 trên bo mạch YoloUNO (ESP32-S3), sinh viên đã rút ra được các kết luận và bài học quan trọng:
+\begin{enumerate}
+    \item \textbf{Ưu thế vượt trội của RTOS so với Super-loop:} Trong kiến trúc truyền thống không dùng RTOS, việc điều khiển đồng thời hai thiết bị có chu kỳ không đồng nhất (như LED 2s và NeoPixel 5s hoặc 14s) đòi hỏi người lập trình phải tự quản lý biến đếm thời gian với hàm \texttt{millis()} rất phức tạp và dễ lỗi. FreeRTOS đã giải quyết triệt để vấn đề này bằng mô hình đa tác vụ với cú pháp \texttt{vTaskDelay()} tự nhiên, tường minh.
+    \item \textbf{Kỷ luật bộ nhớ ngăn xếp (Stack Management):} Việc cấp phát Stack Depth là $2048\text{ bytes}$ cho mỗi tác vụ điều khiển LED là an toàn, tránh được lỗi tràn ngăn xếp (\textit{Stack Overflow}) thường gặp trên vi điều khiển.
+    \item \textbf{Đồng bộ hóa đúng cách:} Khi chia sẻ dữ liệu giữa các tác vụ, từ khóa \texttt{volatile} là bắt buộc để ngăn chặn sự tối ưu hóa sai của trình biên dịch trong môi trường đa luồng.
+\end{enumerate}
