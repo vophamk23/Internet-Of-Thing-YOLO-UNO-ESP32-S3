@@ -11,7 +11,8 @@ void task_neopixel(void *pvParameters) {
   while (1) {
 
     // Kiểm tra trạng thái lỗi cảm biến (Bài 3)
-    if (glob_sensor_error || (glob_temperature == 0.0 && glob_humidity == 0.0)) {
+    if (glob_sensor_error ||
+        (glob_temperature == 0.0 && glob_humidity == 0.0)) {
 
       // Khi có lỗi: NeoPixel nhấp nháy màu VÀNG cảnh báo
       strip.setPixelColor(0, strip.Color(255, 200, 0)); // Bật VÀNG

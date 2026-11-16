@@ -75,8 +75,8 @@ uint8_t DHT20::resetSensor()
 //
 int DHT20::read()
 {
-  //  do not read to fast == more than once per second.
-  if (millis() - _lastRead < 1000)
+  //  do not read too fast == at least 80ms according to datasheet.
+  if (millis() - _lastRead < 80)
   {
     return DHT20_ERROR_LASTREAD;
   }

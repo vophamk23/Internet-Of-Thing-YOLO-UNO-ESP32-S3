@@ -89,6 +89,16 @@ void task_temp_humi_filter(void *pvParameters) {
   lcd.backlight();
   lcd.clear();
 
+  lcd.setCursor(0, 0);
+  lcd.print("Adv Filter Init");
+  vTaskDelay(1000);
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("Avg Filter Init");
+  vTaskDelay(1000);
+  lcd.clear();
+
   // Định nghĩa các tham số của bộ lọc trung bình
   const int NUM_SAMPLES = 5;            // Số mẫu thu thập trong 1 đợt
   const float THRESHOLD_TEMP_VAR = 1.5; // Ngưỡng biến thiên nhiệt độ: 1.5°C
@@ -178,6 +188,11 @@ void task_temp_humi_filter(void *pvParameters) {
     } else {
 
       glob_sensor_error = true;
+      Serial.printf("[ERROR] Khong doc du 5 mau DHT20! (Chi doc duoc %d/5 mau)\n", valid_count);
+      lcd.setCursor(0, 0);
+      lcd.print("! SENSOR ERROR !");
+      lcd.setCursor(0, 1);
+      lcd.print("Check DHT20 I2C ");
     }
 
     // Nghỉ 4.5 giây để tổng chu kỳ đọc xấp xỉ 5 giây
@@ -218,6 +233,11 @@ void task_advanced_filter(void *pvParameters) {
 
   lcd.begin();
   lcd.backlight();
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("Adv Filter Init");
+  vTaskDelay(1000);
   lcd.clear();
 
   // Tham số hệ số làm mượt mũ (Exponential Moving Average)
@@ -290,6 +310,11 @@ void task_advanced_filter(void *pvParameters) {
     } else {
 
       glob_sensor_error = true;
+      Serial.printf("[ERROR] Khong doc du 5 mau DHT20! (Chi doc duoc %d/5 mau)\n", valid_count);
+      lcd.setCursor(0, 0);
+      lcd.print("! SENSOR ERROR !");
+      lcd.setCursor(0, 1);
+      lcd.print("Check DHT20 I2C ");
     }
 
     // Nghỉ 4.5 giây
