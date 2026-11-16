@@ -15,7 +15,13 @@ extern String password;
 extern String wifi_ssid;
 extern String wifi_password;
 
+// Cấu hình CoreIOT Cloud (ThingsBoard)
+extern const char* COREIOT_HOST;
+extern const int   COREIOT_PORT;
+extern const char* COREIOT_TOKEN;
+
 // Trạng thái mạng và công cụ đồng bộ hóa FreeRTOS
+extern bool isAPMode;
 extern bool isWifiConnected;
 extern SemaphoreHandle_t xBinarySemaphoreInternet; // Báo Internet sẵn sàng (Bài tập 5)
 extern SemaphoreHandle_t xSensorMutex;             // Khóa bảo vệ bộ đệm cảm biến (Bài tập 1)

@@ -1,7 +1,9 @@
 #include "mainserver.h"
-#include "web_pages.h"
+
 #include "global.h"
 #include "sensor_task.h"
+#include "web_pages.h"
+
 
 WebServer server(80);
 
@@ -17,14 +19,10 @@ bool led2_state = false;
 // -------------------------------------------------------------
 
 // Phục vụ trang Dashboard từ bộ nhớ Flash PROGMEM
-void handleRoot() {
-    server.send_P(200, "text/html", PAGE_MAIN);
-}
+void handleRoot() { server.send_P(200, "text/html", PAGE_MAIN); }
 
 // Phục vụ trang Cài đặt Wi-Fi từ bộ nhớ Flash PROGMEM
-void handleSettings() {
-    server.send_P(200, "text/html", PAGE_SETTINGS);
-}
+void handleSettings() { server.send_P(200, "text/html", PAGE_SETTINGS); }
 
 // Endpoint trả về dữ liệu cảm biến (Bài tập 1 & Bài tập 3)
 void handleSensors() {
@@ -40,10 +38,8 @@ void handleSensors() {
     const char* h_level = humLevel(h_avg);
 
     char json[128];
-    snprintf(json, sizeof(json), 
-             "{\"temp\":%.2f,\"hum\":%.2f,\"hum_level\":\"%s\"}", 
-             t_avg, h_avg, h_level);
-    
+    snprintf(json, sizeof(json), "{\"temp\":%.2f,\"hum\":%.2f,\"hum_level\":\"%s\"}", t_avg, h_avg, h_level);
+
     server.send(200, "application/json", json);
 }
 
@@ -63,8 +59,7 @@ void handleToggle() {
         }
     }
 
-    String json = "{\"led1\":\"" + String(led1_state ? "ON" : "OFF") + 
-                  "\",\"led2\":\"" + String(led2_state ? "ON" : "OFF") + "\"}";
+    String json = "{\"led1\":\"" + String(led1_state ? "ON" : "OFF") + "\",\"led2\":\"" + String(led2_state ? "ON" : "OFF") + "\"}";
     server.send(200, "application/json", json);
 }
 
@@ -73,7 +68,7 @@ void handleConnect() {
     if (server.hasArg("ssid")) {
         wifi_ssid = server.arg("ssid");
         wifi_password = server.hasArg("pass") ? server.arg("pass") : "";
-        
+
         server.send(200, "text/plain", "Connecting....");
 
         connect_start_ms = millis();
@@ -107,84 +102,97 @@ void handleStatus() {
 void startAP() {
     WiFi.mode(WIFI_AP);
 
-    if (!WiFi.softAP(ssid.c_str(), password.c_str())) {
-        Serial.println("softAP failed (password >= 8?)");
+        // 1. Tối ưu hóa RF: Tắt chế độ tiết kiệm năng lượng để sóng luôn ổn định, không bị trễ/rớt gói
+        WiFi.setSleep(false);
+
+        // 2. Tăng công suất phát sóng Wi-Fi lên mức cực đại cho ESP32-S3 (19.5 dBm ~ 89 mW)
+        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+
+        // 3. Phát SoftAP trên kênh 6 (tránh nghẽn kênh 1 phổ biến của các router xung quanh)
+        if (!WiFi.softAP(ssid.c_str(), password.c_str(), 6)) { Serial.println("[ERROR] softAP failed! (Mat khau phai >= 8 ky tu)"); }
+
+        Serial.println("\n=======================================================");
+        Serial.println("    ESP32-S3 WEB SERVER & DASHBOARD (LAB 4)");
+        Serial.println("=======================================================");
+        Serial.print(" >> Ten Wi-Fi (SSID) : ");
+        Serial.println(ssid);
+        Serial.print(" >> Mat khau (Pass)  : ");
+        Serial.println(password);
+        Serial.print(" >> Dia chi Web URL  : http://");
+        Serial.println(WiFi.softAPIP());
+        Serial.println("=======================================================\n");
+
+        isAPMode = true;
+        connecting = false;
+        isWifiConnected = false;
     }
 
-    Serial.print("AP IP address: ");
-    Serial.println(WiFi.softAPIP());
+    // Kết nối Wi-Fi với chế độ kép để giữ AP hoạt động (Bài tập 4)
+    void connectToWiFi() {
+        WiFi.mode(WIFI_AP_STA);
 
-    isAPMode = true;
-    connecting = false;
-    isWifiConnected = false;
-}
-
-// Kết nối Wi-Fi với chế độ kép để giữ AP hoạt động (Bài tập 4)
-void connectToWiFi() {
-    WiFi.mode(WIFI_AP_STA);
-
-    if (wifi_password.isEmpty()) {
-        WiFi.begin(wifi_ssid.c_str());
-    } else {
-        WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
-    }
-
-    Serial.print("Connecting to: ");
-    Serial.println(wifi_ssid);
-}
-
-void setupServer() {
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/sensors", HTTP_GET, handleSensors);
-    server.on("/toggle", HTTP_GET, handleToggle);
-    server.on("/settings", HTTP_GET, handleSettings);
-    server.on("/connect", HTTP_GET, handleConnect);
-    server.on("/status", HTTP_GET, handleStatus);
-    server.begin();
-
-    Serial.println("HTTP Web Server started on port 80");
-}
-
-void main_server_task(void *pvParameters) {
-    pinMode(BOOT_PIN, INPUT_PULLUP);
-    pinMode(LED1_PIN, OUTPUT);
-    pinMode(LED2_PIN, OUTPUT);
-
-    digitalWrite(LED1_PIN, LOW);
-    digitalWrite(LED2_PIN, LOW);
-
-    startAP();
-    setupServer();
-
-    while (1) {
-        server.handleClient();
-
-        // Nhấn nút BOOT quay về AP mode (Checkpoint D6)
-        if (digitalRead(BOOT_PIN) == LOW) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            if (digitalRead(BOOT_PIN) == LOW && !isAPMode) {
-                Serial.println("[BOOT] Pressed -> Returning to AP Mode");
-                startAP();
-            }
+        if (wifi_password.isEmpty()) {
+            WiFi.begin(wifi_ssid.c_str());
+        } else {
+            WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
         }
 
-        // Giám sát quá trình kết nối Wi-Fi (Timeout 10 giây)
-        if (connecting) {
-            if (WiFi.status() == WL_CONNECTED) {
-                Serial.print("STA IP address: ");
-                Serial.println(WiFi.localIP());
-
-                isWifiConnected = true;
-                xSemaphoreGive(xBinarySemaphoreInternet); // Báo Internet sẵn sàng (Bài tập 5)
-
-                isAPMode = false;
-                connecting = false;
-            } else if (millis() - connect_start_ms > 10000) {
-                Serial.println("WiFi connect failed! Back to AP.");
-                startAP();
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(20));
+        Serial.print("Connecting to: ");
+        Serial.println(wifi_ssid);
     }
-}
+
+    void setupServer() {
+        server.on("/", HTTP_GET, handleRoot);
+        server.on("/sensors", HTTP_GET, handleSensors);
+        server.on("/toggle", HTTP_GET, handleToggle);
+        server.on("/settings", HTTP_GET, handleSettings);
+        server.on("/connect", HTTP_GET, handleConnect);
+        server.on("/status", HTTP_GET, handleStatus);
+        server.begin();
+
+        Serial.println("HTTP Web Server started on port 80");
+    }
+
+    void main_server_task(void* pvParameters) {
+        pinMode(BOOT_PIN, INPUT_PULLUP);
+        pinMode(LED1_PIN, OUTPUT);
+        pinMode(LED2_PIN, OUTPUT);
+
+        digitalWrite(LED1_PIN, LOW);
+        digitalWrite(LED2_PIN, LOW);
+
+        startAP();
+        setupServer();
+
+        while (1) {
+            server.handleClient();
+
+            // Nhấn nút BOOT quay về AP mode (Checkpoint D6)
+            if (digitalRead(BOOT_PIN) == LOW) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                if (digitalRead(BOOT_PIN) == LOW && !isAPMode) {
+                    Serial.println("[BOOT] Pressed -> Returning to AP Mode");
+                    startAP();
+                }
+            }
+
+            // Giám sát quá trình kết nối Wi-Fi (Timeout 10 giây)
+            if (connecting) {
+                if (WiFi.status() == WL_CONNECTED) {
+                    Serial.print("STA IP address: ");
+                    Serial.println(WiFi.localIP());
+
+                    isWifiConnected = true;
+                    xSemaphoreGive(xBinarySemaphoreInternet);  // Báo Internet sẵn sàng (Bài tập 5)
+
+                    isAPMode = false;
+                    connecting = false;
+                } else if (millis() - connect_start_ms > 10000) {
+                    Serial.println("WiFi connect failed! Back to AP.");
+                    startAP();
+                }
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }

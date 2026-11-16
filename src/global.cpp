@@ -14,6 +14,11 @@ String password = "Lab4_2313946";
 String wifi_ssid = "";
 String wifi_password = "";
 
+// Cấu hình máy chủ MQTT CoreIOT (ThingsBoard) & API Token
+const char* COREIOT_HOST  = "app.coreiot.io";
+const int   COREIOT_PORT  = 1883;
+const char* COREIOT_TOKEN = "ACCESS_TOKEN";     // Thay bằng Access Token của thiết bị bạn
+
 // Cờ báo trạng thái mạng và các công cụ đồng bộ hóa FreeRTOS
 bool isWifiConnected = false;
 SemaphoreHandle_t xBinarySemaphoreInternet = NULL; // Báo hiệu khi có Internet

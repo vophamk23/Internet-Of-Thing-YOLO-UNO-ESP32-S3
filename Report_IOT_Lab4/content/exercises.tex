@@ -654,31 +654,61 @@ function startConnect() {
 
 \subsubsection{Mã nguồn hoàn chỉnh tác vụ \texttt{internet\_task}}
 
-\begin{lstlisting}[caption={Tác vụ internet\_task xử lý MQTT Telemetry, Báo động và Quản lý vòng đời}]
+\begin{lstlisting}[caption={Tác vụ internet\_task xử lý MQTT Telemetry, Báo động và RPC Điều khiển ngược}]
+// Con tro toan cuc de phan hoi RPC trong callback
+static PubSubClient* g_mqttClient = NULL;
+
+// Callback xu ly lenh dieu khien nguoc tu CoreIOT Cloud (RPC Downlink)
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    char msg[256];
+    if (length >= sizeof(msg)) length = sizeof(msg) - 1;
+    memcpy(msg, payload, length); msg[length] = '\0';
+
+    String topicStr = String(topic);
+    if (topicStr.startsWith("v1/devices/me/rpc/request/")) {
+        String reqId = topicStr.substring(26);
+        if (strstr(msg, "setLed1") || strstr(msg, "setValue") || strstr(msg, "led1")) {
+            led1_state = (strstr(msg, "true") || strstr(msg, "1") || strstr(msg, "on"));
+            digitalWrite(LED1_PIN, led1_state ? HIGH : LOW);
+        }
+        if (strstr(msg, "setLed2") || strstr(msg, "led2")) {
+            led2_state = (strstr(msg, "true") || strstr(msg, "1") || strstr(msg, "on"));
+            digitalWrite(LED2_PIN, led2_state ? HIGH : LOW);
+        }
+        if (g_mqttClient && g_mqttClient->connected()) {
+            String respTopic = "v1/devices/me/rpc/response/" + reqId;
+            String respPayload = "{\"led1\":\"" + String(led1_state ? "ON":"OFF") + 
+                                 "\",\"led2\":\"" + String(led2_state ? "ON":"OFF") + "\"}";
+            g_mqttClient->publish(respTopic.c_str(), respPayload.c_str());
+        }
+    }
+}
+
 void internet_task(void *pvParameters) {
     WiFiClient espClient;
     PubSubClient mqttClient(espClient);
     mqttClient.setServer(COREIOT_HOST, COREIOT_PORT);
+    mqttClient.setCallback(mqttCallback);
+    g_mqttClient = &mqttClient;
 
     bool prev_danger = false;
     uint32_t last_telemetry_ms = 0;
-    uint32_t reconnect_delay_ms = 2000; // Khoi tao delay back-off 2s
+    uint32_t reconnect_delay_ms = 2000;
 
     while (1) {
-        // 1. Cho tren Semaphore Internet san sang (0% CPU khi cho)
         if (xSemaphoreTake(xBinarySemaphoreInternet, portMAX_DELAY) == pdTRUE) {
             Serial.println("[NET] Nhan Semaphore -> Ket noi CoreIOT MQTT...");
             prev_danger = false;
             last_telemetry_ms = millis() - 10000;
             reconnect_delay_ms = 2000;
 
-            // 2. Vong lap giu ket noi khi Wi-Fi con hoat dong
             while (isWifiConnected && WiFi.status() == WL_CONNECTED) {
                 if (!mqttClient.connected()) {
                     Serial.print("[MQTT] Dang ket noi toi Broker... ");
                     if (mqttClient.connect("YoloUNO_ESP32S3", COREIOT_TOKEN, "")) {
                         Serial.println("Thanh cong!");
-                        reconnect_delay_ms = 2000; // Reset thoi gian cho
+                        mqttClient.subscribe("v1/devices/me/rpc/request/+");
+                        reconnect_delay_ms = 2000;
                     } else {
                         Serial.printf("That bai, rc=%d. Thu lai sau %lu ms\n", 
                                       mqttClient.state(), reconnect_delay_ms);
@@ -698,24 +728,47 @@ void internet_task(void *pvParameters) {
                         const char* t_lvl = tempLevel(t_avg);
                         const char* h_lvl = humLevel(h_avg);
 
-                        char payload[160];
+                        // Dong goi JSON Telemetry chuan CoreIOT truc quan, de doc
+                        char payload[256];
                         snprintf(payload, sizeof(payload),
-                            "{\"temperature\":%.2f,\"humidity\":%.2f,"
-                            "\"temp_level\":\"%s\",\"hum_level\":\"%s\"}",
+                            "{\n"
+                            "  \"temperature\": %.2f,\n"
+                            "  \"humidity\": %.2f,\n"
+                            "  \"temp_level\": \"%s\",\n"
+                            "  \"hum_level\": \"%s\"\n"
+                            "}",
                             t_avg, h_avg, t_lvl, h_lvl);
                         mqttClient.publish("v1/devices/me/telemetry", payload);
-                        Serial.printf("[COREIOT TELEMETRY] %s\n", payload);
+
+                        // In log ra Serial Monitor truc quan, ro rang
+                        Serial.println("\n------------------ [COREIOT TELEMETRY PUBLISH] ------------------");
+                        Serial.printf("  [+] Topic MQTT : v1/devices/me/telemetry\n");
+                        Serial.printf("  [+] Nhiet do TB: %.2f C  [Muc: %s]\n", t_avg, t_lvl);
+                        Serial.printf("  [+] Do am TB   : %.2f %%  [Muc: %s]\n", h_avg, h_lvl);
+                        Serial.println("  [+] Payload JSON:");
+                        Serial.println(payload);
+                        Serial.println("-----------------------------------------------------------------\n");
 
                         // 4. Kiem tra va phat bao dong khan cap (State Change Latch)
                         bool is_danger = (strcmp(t_lvl, "danger") == 0 || strcmp(h_lvl, "danger") == 0);
                         if (is_danger && !prev_danger) {
-                            char alarm[160];
+                            char alarm[256];
                             snprintf(alarm, sizeof(alarm),
-                                "{\"alarm\":\"HIGH_THRESHOLD_DANGER\","
-                                "\"temp\":%.2f,\"hum\":%.2f,\"msg\":\"Canh bao!\"}",
+                                "{\n"
+                                "  \"alarm\": \"HIGH_THRESHOLD_DANGER\",\n"
+                                "  \"temp\": %.2f,\n"
+                                "  \"hum\": %.2f,\n"
+                                "  \"msg\": \"Vuot nguong nguy hiem!\"\n"
+                                "}",
                                 t_avg, h_avg);
                             mqttClient.publish("v1/devices/me/telemetry", alarm);
-                            Serial.printf("[COREIOT ALARM SENT] %s\n", alarm);
+
+                            Serial.println("\n**************** [CANH BAO NGUY HIEM - COREIOT ALARM] ****************");
+                            Serial.printf("  [!] Trang thai: PHAT HIEN VUOT NGUONG NGUY HIEM!\n");
+                            Serial.printf("  [!] Nhiet do  : %.2f C | Do am: %.2f %%\n", t_avg, h_avg);
+                            Serial.println("  [!] Goi tin Alarm JSON:");
+                            Serial.println(alarm);
+                            Serial.println("**********************************************************************\n");
                         }
                         prev_danger = is_danger; // Cap nhat chot trang thai
                     }
